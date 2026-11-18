@@ -1,0 +1,91 @@
+# Perfil de la familia Zúrich (Baumkataster + Bauminventar + vistas CAD/3D).
+# Traduce la guía SRC_d4e2d2d292c6 a datos. Aquí NO van respuestas.
+
+family: zurich_trees
+analysis_source: SRC_d4e2d2d292c6
+metric_epsg: 2056          # guía: EPSG:4326 -> EPSG:2056, orden x/y, metros euclidianos, radio inclusivo
+source_ids: [SRC_6d18ee871a91, SRC_2af3e1e5670c, SRC_abecc73b3d4f, SRC_277c7db645d0, SRC_3f651df50a11,
+             SRC_48dbc4d94819, SRC_9695810b87c3, SRC_a906ac21f742, SRC_d4e2d2d292c6]
+
+tools: [count, percent, mean, extreme, distinct, group_count, columns, metadata, record,
+        areas, validity, nearest, within_radius, z_extent, symbol_radius, key_audit, prefix_counts, service_count]
+
+tables:
+  register:
+    source_id: SRC_6d18ee871a91
+    metadata_source_id: SRC_a906ac21f742
+    key: baumnummer
+    geo: true
+    description: "Baumkataster: complete frozen snapshot of city-managed trees (points, EPSG:4326)"
+  inventory:
+    source_id: SRC_2af3e1e5670c
+    metadata_source_id: SRC_9695810b87c3
+    key: baumnummer
+    geo: true
+    description: "Bauminventar: derived inventory = Baumkataster (BK_ ids) + swisstopo TLM3D model trees (TLM3D_ ids)"
+  crown:
+    source_id: SRC_abecc73b3d4f
+    key: baumnummer
+    geo: true
+    description: "CAD crown drawing view: bounded native subset of 200 polygons, not the whole city"
+  symbol:
+    source_id: SRC_277c7db645d0
+    key: objectid
+    geo: true
+    description: "CAD position-symbol view: bounded subset of 200 small drawn circles"
+  parts3d:
+    source_id: SRC_3f651df50a11
+    key: baumnummer
+    geo: true
+    z_show: [hoehe_baum_total, baumteil]
+    description: "3D tree-parts view (EPSG:4979 with Z): bounded subset of 200 features"
+
+extra_sources:
+  service_count:
+    source_id: SRC_48dbc4d94819
+    attribute: numberOfFeatures
+    description: "publisher WFS hits response for the 3D parts layer (a feature count, not a tree census)"
+
+examples:
+  - q: "How many register records have kategorie Parkbaum, and how many have status Grünanlage?"
+    plan: {calls: [{tool: count, table: register, filters: [{field: kategorie, op: eq, value: Parkbaum}]},
+                   {tool: count, table: register, filters: [{field: status, op: eq, value: "Grünanlage"}]}]}
+  - q: "What is the planar area of crown features AB-1 and CD-2, and how much larger is AB-1?"
+    plan: {calls: [{tool: areas, table: crown, ids: ["AB-1", "CD-2"]}]}
+  - q: "Within 40 m of register tree XY-9, how many records are there and what share were planted in 2010 or later?"
+    plan: {calls: [{tool: within_radius, table: register, anchor: "XY-9", radius: 40,
+                    filters: [{field: pflanzjahr, op: ge, value: 2010}]}]}
+  - q: "Which register entry is closest to XY-9?"
+    plan: {calls: [{tool: nearest, table: register, anchor: "XY-9"}]}
+  - q: "Compare objectid 5 in the symbol view and in the register."
+    plan: {calls: [{tool: record, table: symbol, key_field: objectid, ids: [5]},
+                   {tool: record, table: register, key_field: objectid, ids: [5]}]}
+  - q: "How many inventory entries have no pflanzjahr?"
+    plan: {calls: [{tool: count, table: inventory, filters: [{field: pflanzjahr, op: "null"}]}]}
+
+rules_for_llm:
+  - "Sources are frozen snapshots; downloading them today does not make them 2026 observations."
+  - "Register and inventory point files are complete snapshots; crown, position-symbol and 3D views are bounded subsets of 200 and must not be extrapolated to the city."
+  - "The inventory is derived: register trees (BK_ ids) plus swisstopo TLM3D model trees (TLM3D_ ids); a bigger total is not newer planting."
+  - "Distances/areas: EPSG:4326 to EPSG:2056 (x/y), Euclidean metres, radius boundary included."
+  - "Native nulls stay null; never fill missing planting years; unknown year is not 'newly planted'."
+  - "Invalid geometries are reported, not repaired or dropped."
+  - "Z extent of a 3D part is not whole-tree height; drawn symbols and crown diameters are not field measurements."
+  - "Count records, not inferred physical trees; service feature counts are not tree censuses."
+  - "Join tables on baumnummer-style keys, not on objectid (a row counter per file)."
+  - "Round distances, areas and percentages to 2 decimals."
+
+year_field: pflanzjahr
+field_synonyms:
+  pflanzjahr: ["planting year", "planted", "plant year"]
+  baumgattunglat: ["genus", "genera"]
+  baumartlat: ["species"]
+  baumnamedeu: ["german name", "tree name", "species"]
+  kronendurchmesser: ["crown diameter"]
+  strasse: ["street", "address"]
+  quartier: ["quarter", "district", "neighbourhood"]
+  hoehe: ["height"]
+  hoehe_baum_total: ["height"]
+  genauigkeit: ["accuracy", "location quality", "positional"]
+  kategorie: ["category"]
+  uuid_tlm3d: ["tlm3d"]

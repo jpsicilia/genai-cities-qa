@@ -1,0 +1,74 @@
+# Perfil de la familia Dublín (arbolado DCC + DLR).
+# Traduce las convenciones del Analysis.md (SRC_36c9e32d5795) a datos que usan las herramientas.
+# Aquí NO van respuestas: solo nombres de fuentes, filtros con nombre y mapeos documentados.
+
+family: dublin_trees
+analysis_source: SRC_36c9e32d5795
+tools: [count, percent, mean, extreme, distinct, lookup, group_count, variants, allocation, circle_area, columns, metadata]
+
+tables:
+  dcc:
+    source_id: SRC_a9426f7d7b10
+    metadata_source_id: SRC_9478c20ac637
+    key: ID
+    description: "Dublin City Council tree inventory (CKAN datastore export, categorical bands)"
+  dlr:
+    source_id: SRC_3670aa7c7878
+    metadata_source_id: SRC_2c9766a7c172
+    key: Tree_code
+    description: "Dún Laoghaire-Rathdown 2019 tree inventory (partial; numeric Act_height, coded Height/Age)"
+  costs:
+    source_id: SRC_5f982faa8874
+    description: "Organiser hypothetical inspection costs per street (credits)"
+    plan: false
+
+named_filters:
+  poor_tall:            # Analysis.md: Poor-and-tall screening rule
+    table: dcc
+    filters:
+      - {field: Condition, op: eq, value: "Poor (Low Vitality/Extensive Defects)"}
+      - {field: Height, op: in, value: ["15 to 20m", "20 to 25m", "Over 25m"]}
+      - {field: Species, op: ne, value: "Suitable Planting Location"}
+  dlr_screen_keep:      # Analysis.md: explicit DLR exclusion screen (what remains)
+    table: dlr
+    filters:
+      - {field: Common_nam, op: not_in, value: ["Stump", "Vacant tree pit", "Unknown - Dead"]}
+
+mappings:
+  dcc_height_lower_edge:
+    "00 to 05m": 0
+    "05 to 10m": 5
+    "10 to 15m": 10
+    "15 to 20m": 15
+    "20 to 25m": 20
+    "Over 25m": 25
+
+scenarios:
+  allocation:           # Analysis.md: inspection-allocation scenario (hypothetical costs)
+    costs_table: costs
+    name_field: street
+    cost_field: hypothetical_cost_credits
+    target_table: dcc
+    target_field: Street
+    named_filter: poor_tall
+    k: 2
+    default_budget: 550
+
+normalisation:
+  street: eq_norm       # ignorar mayúsculas y espacios de extremos; no juntar abreviaturas
+
+rules_for_llm:          # recordatorios para redactar las partes conceptuales
+  - "Inventories are frozen historic exports, not a current census of living trees."
+  - "Count records unless distinct keys are requested."
+  - "Null-only checks differ from trim-aware blank checks."
+  - "Unknown height is not a measured zero; DLR codes are classes, not metres."
+  - "Organiser screens are inspection rules, not diagnoses; costs are hypothetical."
+  - "Calculate before rounding: 2 decimals for means/areas/percentages, integers for counts."
+
+field_synonyms:
+  Street: ["street"]
+  Act_height: ["height"]
+  Height: ["height", "band"]
+  Common_nam: ["common name", "label"]
+  Species: ["species"]
+  Condition: ["condition"]
