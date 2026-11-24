@@ -215,6 +215,24 @@ def _service_count(profile):
             "evidence": [{"source_id": sid, "locator": f"XML attribute {cfg['attribute']}", "claim": f"{n} features reported"}]}
 
 
+PREFIX_RE = re.compile(r"^([A-Za-z0-9]+_)")
+
+
+def _null_breakdown(res, df, filters, key):
+    """Conteo de vacíos de UN campo: si la clave tiene espacios de nombres (BK_, TLM3D_...), reparte el
+    conteo por prefijo. Explica vacíos esperables (p. ej. un campo que solo llena una de las fuentes)."""
+    if not key or key not in df.columns or len(filters or []) != 1 or filters[0]["op"] not in ("null", "blank"):
+        return
+    pre = df[key].astype(str).str.extract(PREFIX_RE, expand=False)
+    vc = pre.value_counts()
+    if len(vc) < 2 or vc.sum() < 0.95 * len(df):
+        return
+    m = T.mask(df, filters)
+    by = {p: int((m & pre.eq(p)).sum()) for p in vc.index}
+    res["by_prefix"] = by
+    res["display"] += " (by ID prefix: " + ", ".join(f"{p} {n}" for p, n in by.items()) + ")"
+
+
 GEO_TOOLS = {"areas", "validity", "nearest", "within_radius", "z_extent", "symbol_radius"}
 
 
@@ -280,6 +298,7 @@ def run_call(call, profile, question="", n_percent_calls=0):
         key = call.get("key_field") if call.get("key_field") not in (None, "none") else tcfg.get("key")
         ids = [_repair_id(df[key], i, notes) for i in _ids(call)]
         res = S.record(df, key, ids, source_id=sid)
+        res["key_field"] = key
     elif tool == "key_audit":
         b = call.get("table_b") if call.get("table_b") in profile.cfg["tables"] else None
         if b is None:
@@ -294,6 +313,7 @@ def run_call(call, profile, question="", n_percent_calls=0):
         res = _service_count(profile)
     elif tool == "count":
         res = T.count(df, filters, source_id=sid)
+        _null_breakdown(res, df, filters, tcfg.get("key"))
     elif tool == "percent":
         den = _clean_filters(df, call.get("denominator"), notes)
         den = _guard_denominator(filters, den, question, n_percent_calls, notes)
@@ -310,6 +330,8 @@ def run_call(call, profile, question="", n_percent_calls=0):
                 field = fits[0]
         mp = mp or _auto_mapping(df, field, profile, notes)
         res = T.mean(df, field, filters, positive_only=bool(call.get("positive_only")), mapping=mp, source_id=sid)
+        res["field"] = field
+        res["kind"] = "band lower-edge" if mp else ("positive-only" if call.get("positive_only") else "raw")
     elif tool == "extreme":
         res = T.extreme(df, field, filters, id_field=tcfg.get("key"), source_id=sid,
                         show=[c for c in df.columns if c != tcfg.get("key")
@@ -324,12 +346,19 @@ def run_call(call, profile, question="", n_percent_calls=0):
     elif tool == "group_count":
         norm = (field or "").lower() in {k.lower() for k in profile.cfg.get("normalisation", {})}
         res = T.group_count(df, field, filters, normalize=norm, top=5, source_id=sid)
+        if norm and res["value"]:
+            sub = df[T.mask(df, filters)] if filters else df
+            v = T.variants(sub, field, str(res["value"][0][0]), source_id=sid)
+            res["by_spelling"] = v["by_spelling"]
+            res["display"] += " (by spelling: " + ", ".join(f"{k!r} {n}" for k, n in v["by_spelling"].items()) + ")"
+            res["evidence"] += v["evidence"]
     elif tool == "variants":
         res = T.variants(df, field or "Street", str(call.get("key", "")), source_id=sid)
     elif tool == "allocation":
         res = _allocation(profile, call.get("budget"))
     elif tool == "circle_area":
         res = T.circle_area_range(float(call.get("d_min", 0)), float(call.get("d_max", 0)))
+        res["d"] = (float(call.get("d_min", 0)), float(call.get("d_max", 0)))
     elif tool == "columns":
         cols = list(df.columns)
         res = {"op": "columns", "value": cols, "display": ", ".join(cols),
@@ -338,6 +367,17 @@ def run_call(call, profile, question="", n_percent_calls=0):
         res = _metadata(tcfg)
     else:
         raise ValueError(tool)
+    ftext = T.describe(filters)
+    if nf:  # cita corta del filtro con nombre en vez de repetir sus 3 condiciones
+        long = T.describe(profile.filters(nf))
+        short = f"{nf} screen (analysis conventions)"
+        ftext = ftext.replace(long, short)
+        for e in res.get("evidence", []):
+            e["locator"] = e["locator"].replace(long, short)
+    res.setdefault("field", field)
+    res.update(table=alias, filters_text=ftext, filters=filters, id_field=tcfg.get("key"))
+    if tool == "percent":
+        res["den_text"] = T.describe(call.get("denominator")) if call.get("denominator") else "all rows"
     res["label"] = _label(call)
     res["notes"] = notes
     return res
@@ -354,10 +394,12 @@ def _allocation(profile, budget):
         flt = profile.filters(sc["named_filter"], {"field": sc["target_field"], "op": "eq_norm", "value": name})
         n = T.count(target, flt)["value"]
         items.append({"name": name, "cost": cost, "value": n})
-        ev.append({"source_id": tsid, "locator": f"filter: [{sc['named_filter']}] AND {sc['target_field']} "
-                   f"= {name!r} (ignoring case)", "claim": f"{name}: {n} records"})
+        ev.append({"source_id": tsid, "locator": f"{sc['named_filter']} screen AND {sc['target_field']} "
+                   f"= {name!r} (case-insensitive)", "claim": f"{name}: {n} records"})
     res = T.best_combo(items, k=sc.get("k", 2), budget=budget, source_id=csid)
-    res["evidence"] += ev
+    res["budget"] = budget
+    chosen = set((res.get("value") or {}).get("names", []))
+    res["evidence"] += [e for e in ev if e["claim"].split(":")[0] in chosen]
     return res
 
 
@@ -439,6 +481,8 @@ MOST_RE = re.compile(r"\b(most common|most frequent|which [a-z ]{0,40}has the mo
 
 
 ID_RE = re.compile(r"[A-Za-z0-9]+(?:[_-][A-Za-z0-9]+)+")
+GEOM_RE = re.compile(r"geometr|polygon|self[- ]?intersect|topolog|footprint|outline|\bring\b|shapely")
+EMPTY_RE = re.compile(r"\b(empty|null|missing|blank|no value|without)\b")
 ID_TOOLS = {"areas", "z_extent", "record", "nearest", "within_radius", "lookup"}
 OF_THOSE_RE = re.compile(r"\bhow many of (those|them|these)\b")
 
@@ -470,6 +514,20 @@ def repair_plan(calls, question, profile, notes):
     out = []
     for c in calls:
         c = dict(c)
+        nf = c.get("named_filter")
+        if nf not in (None, "none"):
+            mention = profile.cfg.get("named_filters", {}).get(nf, {}).get("mention")
+            if mention and not re.search(mention, q):
+                notes.append(f"dropped named filter {nf!r}: the question does not mention it")
+                c["named_filter"] = "none"
+        if c.get("tool") == "validity" and not GEOM_RE.search(q) and c.get("table") in profile.cfg["tables"]:
+            df = profile.table(c["table"])[0]
+            named = [col for col in df.columns if re.search(rf"\b{re.escape(col.lower())}\b", q)]
+            if named and EMPTY_RE.search(q):
+                col = named[0]
+                op = "null" if pd.api.types.is_numeric_dtype(df[col]) else "blank"
+                c = {"tool": "count", "table": c["table"], "filters": [{"field": col, "op": op}]}
+                notes.append(f"'validity' without geometry wording -> count of empty {col!r}")
         if c.get("table") in profile.cfg["tables"] and c.get("filters"):
             df = profile.table(c["table"])[0]
             c["filters"] = [_realign_field(df, f, notes, q) if f.get("field") in df.columns else f for f in c["filters"]]

@@ -1,5 +1,4 @@
 """Tests de herramientas espaciales con geometría sintética de respuesta conocida (no usan datos del Test)."""
-import math
 
 import geopandas as gpd
 import pandas as pd
@@ -69,8 +68,8 @@ def test_symbol_radius():
 
 
 def test_key_audit_and_prefixes():
-    reg = pd.DataFrame({"baumnummer": ["WD-1", "WD-2", "nn-3"]})
-    inv = pd.DataFrame({"baumnummer": ["BK_WD-1", "BK_WD-9", "TLM3D_EB-1", "BK_BK_X"]})
+    reg = pd.DataFrame({"baumnummer": ["AA-1", "AA-2", "nn-3"]})
+    inv = pd.DataFrame({"baumnummer": ["BK_AA-1", "BK_AA-9", "TLM3D_EB-1", "BK_BK_X"]})
     r = S.key_audit(reg, "baumnummer", inv, "baumnummer", strip_prefix="BK_", keep_prefix="BK_")
     assert (r["both"], r["only_a"], r["only_b"]) == (1, 2, 2)  # 'BK_BK_X' -> 'BK_X' (solo un prefijo)
     p = S.prefix_counts(inv, "baumnummer", ["BK_", "TLM3D_"])

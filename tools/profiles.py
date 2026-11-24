@@ -1,5 +1,6 @@
 """Carga perfiles YAML y resuelve tablas y filtros con nombre."""
 import os
+from functools import lru_cache
 
 import pandas as pd
 import yaml
@@ -57,11 +58,17 @@ def all_profiles():
     return [f[:-5] for f in sorted(os.listdir(PROFILES_DIR)) if f.endswith(".yaml")]
 
 
+@lru_cache(maxsize=None)
+def get_profile(name):
+    """Un solo objeto por perfil: las tablas se cargan una vez para todas las preguntas."""
+    return Profile(name)
+
+
 def profile_for(source_ids):
     """Elige el perfil cuyas fuentes más se solapan con los Source_IDs de una pregunta."""
     best, score = None, 0
     for name in all_profiles():
-        p = Profile(name)
+        p = get_profile(name)
         ids = set(p.cfg.get("source_ids", [])) | {t["source_id"] for t in p.cfg["tables"].values()}
         ids |= {t.get("metadata_source_id") for t in p.cfg["tables"].values()} | {p.cfg.get("analysis_source")}
         s = len(ids & set(source_ids))

@@ -12,7 +12,7 @@ from tools import tabular as T
 @pytest.fixture
 def df():
     return pd.DataFrame({
-        "id": ["a", "b", "b", "0.00E+00", "0.00E+00", "c"],
+        "id": ["a", "b", "b", "dup-x", "dup-x", "c"],
         "street": ["MAIN ST", "Main St", " main st ", None, "", "Oak Rd"],
         "cond": ["Poor", "Fair", None, "Poor", "Dead", "Poor"],
         "band": ["00 to 05m", "Over 25m", None, "05 to 10m", "05 to 10m", "Over 25m"],

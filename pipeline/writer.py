@@ -29,7 +29,7 @@ def build_messages(question, results, profile, verdict_list=None):
         "or missing, say that this part could not be computed. Answer every part of the question in order. "
         "For yes/no or 'could/should/does it establish' parts, answer explicitly (Yes/No) and give a one-sentence "
         "reason grounded in the rules or results. State denominators when giving percentages. Be concise: "
-        "3-6 sentences, no headings, no evidence list.\n\n"
+        "2-4 sentences and at most 70 words, no headings, no evidence list.\n\n"
         f"DATA RULES:\n{rules}"
     )
     user = f"QUESTION: {question}\n\nCOMPUTED RESULTS:\n{_facts(results)}"
@@ -39,22 +39,46 @@ def build_messages(question, results, profile, verdict_list=None):
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def evidence_lines(results, profile, max_lines=8):
-    seen, out = set(), []
+def _clip(text, n):
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def evidence_lines(results, profile, verdict_list=None, max_lines=4):
+    """Evidencia compacta: primero los números (2), luego las notas de las guías que respaldan los
+    veredictos, luego el resto. Si ningún veredicto cita una nota, se cita la guía de análisis."""
+    def line(e):
+        return f"- {e['source_id']} | {_clip(e['locator'], 110)} | {_clip(e['claim'], 110)}"
+
+    seen, tool_l, verd_l = set(), [], []
     for r in results:
         for e in r.get("evidence", []):
-            line = f"- {e['source_id']} | {e['locator']} | {e['claim']}"
-            if e["source_id"] and line not in seen:
-                seen.add(line)
-                out.append(line)
+            ln = line(e)
+            if e.get("source_id") and ln not in seen:
+                seen.add(ln)
+                tool_l.append(ln)
+    for v in verdict_list or []:
+        e = v.get("evidence")
+        if e and line(e) not in seen:
+            seen.add(line(e))
+            verd_l.append(line(e))
+    out = tool_l[:2] + verd_l + tool_l[2:]
     a = profile.cfg.get("analysis_source")
-    if a:
-        out.append(f"- {a} | Analysis conventions | scope, counting, blank/null and rounding rules applied")
+    if a and not verd_l and len(out) < max_lines:
+        out.append(f"- {a} | analysis conventions file | counting, null/blank and rounding conventions applied")
     return out[:max_lines]
 
 
 def format_answer(qid, answer_text, evidence):
     return f"## {qid}\n\n{answer_text.strip()}\n\n### Evidence\n" + "\n".join(evidence) + "\n"
+
+
+def _human_label(r):
+    """'count | dcc | Condition = 'Dead'' -> "count (dcc; Condition = 'Dead')"."""
+    parts = [p.strip() for p in str(r.get("label") or r.get("op", "")).split("|") if p.strip()]
+    if len(parts) <= 2:
+        return " ".join(parts) or r.get("op", "result")
+    return f"{parts[0]} ({parts[1]}; {'; '.join(parts[2:])})"
 
 
 def verify(text, results, question, verdict_list=None):
@@ -83,7 +107,7 @@ def verify(text, results, question, verdict_list=None):
             out = (out + " " + _vsentence(v)).strip()
             notes.append(f"appended verdict {v['verdict']}")
     if missing:
-        facts = "; ".join(f"{r.get('label', r['op'])}: {r['display']}" for r in missing)
-        out = (out + "\n\nComputed values: " + facts).strip()
+        facts = "; ".join(f"{_human_label(r)}: {r['display']}" for r in missing)
+        out = (out + "\n\nComputed values: " + _clip(facts, 400)).strip()
         notes.append(f"appended {len(missing)} computed value(s)")
     return out, notes

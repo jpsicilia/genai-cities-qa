@@ -31,7 +31,14 @@ def yes_no_parts(question):
     return parts
 
 
-def ask(part, question, facts, profile, budget):
+def _clip(text, n):
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def ask(part, question, facts, profile, budget, notes=None):
+    """notes: frases de las guías (BM25). El modelo elige cuál respalda su veredicto y Python la cita."""
+    notes = notes or []
     rules = "\n".join(f"- {x}" for x in profile.cfg.get("rules_for_llm", []))
     system = ("You judge what frozen city datasets can and cannot support. Answer the yes/no question with "
               "'Yes' or 'No' and ONE short reason (max 25 words) based on the data rules and computed results. "
@@ -39,13 +46,25 @@ def ask(part, question, facts, profile, budget):
               "or snapshot proves, certifies, measures or establishes something the rules say it does not. "
               "Do not put new numbers in the reason.\n\nDATA RULES:\n" + rules)
     user = f"FULL QUESTION: {question}\n\nCOMPUTED RESULTS:\n{facts}\n\nYES/NO QUESTION TO ANSWER: {part}"
+    schema = json.loads(json.dumps(SCHEMA))
+    if notes:
+        user += ("\n\nSOURCE NOTES (pick the number of the note that supports your verdict, or 'none'):\n"
+                 + "\n".join(f"[{i}] {_clip(n['text'], 300)}" for i, n in enumerate(notes, 1)))
+        schema["properties"]["note"] = {"type": "string", "enum": [str(i) for i in range(1, len(notes) + 1)] + ["none"]}
+        schema["required"].append("note")
     raw = llm.chat([{"role": "system", "content": system}, {"role": "user", "content": user}], budget,
-                   schema=SCHEMA, max_tokens=120)
+                   schema=schema, max_tokens=120)
     try:
         d = json.loads(raw)
-        return {"part": part, "verdict": d["verdict"], "reason": d.get("reason", "").strip()}
+        v = {"part": part, "verdict": d["verdict"], "reason": d.get("reason", "").strip()}
     except (json.JSONDecodeError, KeyError):
         return None
+    sel = str(d.get("note", "none"))
+    if sel.isdigit() and 1 <= int(sel) <= len(notes):
+        n = notes[int(sel) - 1]
+        v["evidence"] = {"source_id": n["source_id"], "locator": f"{n['file']} ¶{n['para']}",
+                         "claim": _clip(n["text"], 150)}
+    return v
 
 
 def sentence(v):

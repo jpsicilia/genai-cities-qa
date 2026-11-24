@@ -13,9 +13,9 @@ import itertools
 import pandas as pd
 
 OP_TEXT = {
-    "eq": "=", "ne": "≠", "in": "in", "not_in": "not in", "eq_norm": "= (ignoring case/edge spaces)",
+    "eq": "=", "ne": "≠", "in": "in", "not_in": "not in", "eq_norm": "= (case-insensitive, trimmed)",
     "startswith": "starts with", "contains": "contains", "null": "is null", "notnull": "is not null",
-    "blank": "is blank (null or empty after trim)", "nonblank": "is nonblank after trim",
+    "blank": "is blank (null/empty after trim)", "nonblank": "is nonblank after trim",
     "gt": ">", "ge": "≥", "lt": "<", "le": "≤",
 }
 

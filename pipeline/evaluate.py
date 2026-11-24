@@ -40,7 +40,10 @@ def run(cases, profile, fake=False, show_md=False):
         def fake_chat(messages, budget, schema=None, max_tokens=800):
             budget.calls += 1
             if schema and "verdict" in schema.get("properties", {}):
-                return json.dumps({"verdict": "No", "reason": "fake reason"})
+                d = {"verdict": "No", "reason": "fake reason"}
+                if "note" in schema["properties"]:
+                    d["note"] = "1"
+                return json.dumps(d)
             return json.dumps(plans[messages[-1]["content"]]) if schema else "(fake)"
         llm.chat = fake_chat
 

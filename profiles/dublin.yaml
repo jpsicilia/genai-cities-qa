@@ -25,12 +25,14 @@ tables:
 named_filters:
   poor_tall:            # Analysis.md: Poor-and-tall screening rule
     table: dcc
+    mention: "poor[- ]and[- ]tall|\\btall\\b|screen"     # solo se aplica si la pregunta lo nombra
     filters:
       - {field: Condition, op: eq, value: "Poor (Low Vitality/Extensive Defects)"}
       - {field: Height, op: in, value: ["15 to 20m", "20 to 25m", "Over 25m"]}
       - {field: Species, op: ne, value: "Suitable Planting Location"}
   dlr_screen_keep:      # Analysis.md: explicit DLR exclusion screen (what remains)
     table: dlr
+    mention: "exclusion|screen|remove exactly|\\bexclud"
     filters:
       - {field: Common_nam, op: not_in, value: ["Stump", "Vacant tree pit", "Unknown - Dead"]}
 

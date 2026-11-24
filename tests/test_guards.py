@@ -184,3 +184,33 @@ def test_text_value_on_numeric_field_and_mean_field(Z):
     good = {"calls": [{"tool": "mean", "table": "inventory", "field": "hoehe",
                        "filters": [{"field": "status", "op": "eq", "value": "unbekannt"}]}]}
     assert _same_display(bad, good, Z, q)
+
+
+def test_named_filter_needs_a_mention(P):
+    q = "For our condition summary, give the number marked Poor."
+    bad = {"calls": [{"tool": "count", "table": "dcc", "named_filter": "poor_tall",
+                      "filters": [{"field": "Condition", "op": "eq", "value": "Poor (Low Vitality/Extensive Defects)"}]}]}
+    good = {"calls": [{"tool": "count", "table": "dcc",
+                       "filters": [{"field": "Condition", "op": "eq", "value": "Poor (Low Vitality/Extensive Defects)"}]}]}
+    assert [r["display"] for r in executor.execute(bad, P, q)] == [r["display"] for r in executor.execute(good, P, q)]
+    q2 = "Under the stated Poor-and-tall screening rule, how many DCC records qualify?"
+    notes = []
+    executor.repair_plan(bad["calls"], q2, P, notes)
+    assert not any("named filter" in n for n in notes)
+
+
+def test_validity_without_geometry_words_becomes_empty_count(Z):
+    q = "Lots of inventory rows have an empty uuid_tlm3d. Are those invalid trees?"
+    r = executor.execute({"calls": [{"tool": "validity", "table": "inventory"}]}, Z, q)[0]
+    good = executor.execute({"calls": [{"tool": "count", "table": "inventory",
+                                        "filters": [{"field": "uuid_tlm3d", "op": "blank"}]}]}, Z, q)[0]
+    assert r["op"] == "count" and r["display"] == good["display"]
+    geo = executor.execute({"calls": [{"tool": "validity", "table": "crown"}]}, Z,
+                           "Which crown polygons fail validation?")[0]
+    assert geo["op"] == "validity"
+
+
+def test_normalised_ranking_reports_spelling_split(P):
+    q = "Which DCC street label has the most records after normalisation?"
+    r = executor.execute({"calls": [{"tool": "group_count", "table": "dcc", "field": "Street"}]}, P, q)[0]
+    assert "by spelling" in r["display"] and r["by_spelling"]

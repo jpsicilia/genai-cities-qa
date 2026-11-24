@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from eval_zurich import f, in_test, pick  # noqa: E402
+from eval_zurich import f, first_not_in_test, pick  # noqa: E402
 from pipeline import evaluate  # noqa: E402
 from tools.profiles import Profile  # noqa: E402
 
@@ -20,7 +20,7 @@ def build_cases(P):
     p3 = pick(parts["baumnummer"], 150)
     qv = reg["quartier"].value_counts().index
     quart = qv[min(3, len(qv) - 1)]
-    streets = [s for s in reg["strasse"].value_counts().index if not in_test(s)]
+    streets = first_not_in_test(reg["strasse"].value_counts().index, 6)
     street = streets[min(5, len(streets) - 1)]
     return [
         {"id": "d01", "q": f"How big is the supplied crown footprint of {c1} in square metres, compared with {c2}?",

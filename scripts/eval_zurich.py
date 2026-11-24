@@ -38,6 +38,16 @@ def in_test(v):
     return len(v) >= 4 and re.search(rf"(?<!\w){re.escape(v)}(?!\w)", TEST_TEXT) is not None
 
 
+def first_not_in_test(values, n):
+    out = []
+    for v in values:
+        if not in_test(v):
+            out.append(v)
+            if len(out) >= n:
+                break
+    return out
+
+
 def pick(series, i):
     vals = []
     for v in series.dropna().astype(str).unique():
@@ -64,7 +74,7 @@ def build_cases(P):
     a = pick(reg["baumnummer"], 1000)
     p3 = pick(parts["baumnummer"], 20)
     quart = reg["quartier"].value_counts().index[0]
-    streets = [s for s in reg["strasse"].value_counts().index if not in_test(s)]
+    streets = first_not_in_test(reg["strasse"].value_counts().index, 1)
     street = streets[0]
     return [
         {"id": "z01", "q": f"What are the planar areas of the crown drawing features {c1} and {c2}, and how many square metres larger is {c1} than {c2}?",
