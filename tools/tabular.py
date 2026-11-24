@@ -20,6 +20,9 @@ OP_TEXT = {
 }
 
 
+NUMLIKE = __import__("re").compile(r"[+-]?(\d+[.,]?\d*|[.,]\d+)([eE][+-]?\d+)?")
+
+
 # ------------------------------------------------------------------ helpers de texto
 def _text(s: pd.Series) -> pd.Series:
     return s.fillna("").astype(str)
@@ -40,10 +43,22 @@ def fmt2(x) -> str:
 
 
 # ------------------------------------------------------------------ filtros
+def _num_or_same(v):
+    """'2012' -> 2012.0 para comparar con una columna numérica; lo demás queda igual."""
+    if isinstance(v, str):
+        try:
+            return float(v.strip().replace(",", ".")) if v.strip() else v
+        except ValueError:
+            return v
+    return v
+
+
 def mask(df: pd.DataFrame, filters=None) -> pd.Series:
     m = pd.Series(True, index=df.index)
     for f in filters or []:
         col, op, v = df[f["field"]], f["op"], f.get("value")
+        if pd.api.types.is_numeric_dtype(col) and op in ("eq", "ne", "in", "not_in"):
+            v = [_num_or_same(x) for x in v] if isinstance(v, list) else _num_or_same(v)
         if op == "eq":
             c = col.eq(v)
         elif op == "ne":
@@ -67,7 +82,10 @@ def mask(df: pd.DataFrame, filters=None) -> pd.Series:
         elif op == "nonblank":
             c = ~is_blank(col)
         elif op in ("gt", "ge", "lt", "le"):
-            c = getattr(pd.to_numeric(col, errors="coerce"), op)(v)
+            if isinstance(v, str) and not pd.api.types.is_numeric_dtype(col) and not NUMLIKE.fullmatch(v.strip()):
+                c = getattr(_text(col).where(col.notna()), op)(v)     # fechas/horas ISO: orden de texto
+            else:
+                c = getattr(pd.to_numeric(col, errors="coerce"), op)(_num_or_same(v))
         else:
             raise ValueError(f"operador desconocido: {op}")
         m &= c.fillna(False).astype(bool)
@@ -133,8 +151,8 @@ def extreme(df, field, filters=None, which="max", id_field=None, show=None, sour
     cols = [c for c in ([id_field] if id_field else []) + (show or []) if c]
     records = hits[cols].to_dict("records") if cols else []
     ids = hits[id_field].tolist() if id_field else []
-    return {"op": which, "value": float(val), "display": f"{val:g}", "n_hits": len(hits), "records": records,
-            "evidence": [_ev(source_id, filters, f"{which} {field} = {val:g}",
+    return {"op": which, "value": float(val), "display": f"{val:.15g}", "n_hits": len(hits), "records": records,
+            "evidence": [_ev(source_id, filters, f"{which} {field} = {val:.15g}",
                              (f"{id_field} in {ids[:10]}" + (f" (+{len(ids) - 10} more)" if len(ids) > 10 else ""))
                              if id_field else "")]}
 
@@ -167,16 +185,70 @@ def lookup(df, key_field, key_value, fields=None, source_id=""):
 
 
 def group_count(df, field, filters=None, normalize=False, top=5, source_id=""):
-    """Ranking de conteos por valor de un campo (opcionalmente normalizado)."""
+    """Ranking de conteos por valor de un campo (opcionalmente normalizado), con su parte del total."""
     s = df.loc[mask(df, filters), field]
     if normalize:
         s = norm_text(s)
     vc = s.value_counts(dropna=True)
     ranking = [(k, int(v)) for k, v in vc.head(top).items()]
     top_k = ranking[0] if ranking else (None, 0)
-    return {"op": "group_count", "value": ranking, "display": f"{top_k[0]}: {top_k[1]}",
+    total = int(len(s))
+    share = 100 * top_k[1] / total if total else None
+    ties = [k for k, v in ranking[1:] if v == top_k[1]]
+    return {"op": "group_count", "value": ranking, "display": f"{top_k[0]}: {top_k[1]}", "total": total,
+            "share": share, "share_display": f"{fmt2(share)}%", "ties": ties,
             "evidence": [_ev(source_id, filters, f"top {field}{' (normalised)' if normalize else ''}: "
-                             f"{top_k[0]} with {top_k[1]} records")]}
+                             f"{top_k[0]} with {top_k[1]} of {total} records ({fmt2(share)}%)")]}
+
+
+def sum_(df, field, filters=None, source_id=""):
+    """Suma de un campo numérico sobre los registros que cumplen los filtros (nulos fuera, sin rellenar)."""
+    sub = df.loc[mask(df, filters), field]
+    vals = pd.to_numeric(sub, errors="coerce")
+    n_used, n_null = int(vals.notna().sum()), int(vals.isna().sum())
+    total = float(vals.sum()) if n_used else None
+    disp = "n/a" if total is None else (f"{total:.0f}" if float(total).is_integer() else fmt2(total))
+    return {"op": "sum", "value": total, "display": disp, "n_used": n_used, "n_null": n_null, "field": field,
+            "evidence": [_ev(source_id, filters, f"sum of {field} = {disp} over {n_used} values"
+                             + (f" ({n_null} null)" if n_null else ""))]}
+
+
+def value(df, field, filters=None, info=None, source_id="", max_rows=10):
+    """Valor de 'field' en la(s) fila(s) que eligen los filtros. En hojas de cálculo cita la celda exacta."""
+    info = info or {}
+    sub = df.loc[mask(df, filters)]
+    vals = sub[field].tolist()
+    n = len(vals)
+    letters = info.get("letters") or {}
+
+    def cell(i):
+        if "_row" in sub.columns and letters.get(field):
+            return f"{letters[field]}{int(sub['_row'].iloc[i])}"
+        return None
+
+    def fmt(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return "null"
+        if isinstance(x, float):
+            return f"{x:.15g}"          # valor guardado con toda su precisión (sin notación científica corta)
+        return str(x)
+
+    if n == 1:
+        v = vals[0]
+        num = float(v) if isinstance(v, (int, float)) and not pd.isna(v) else None
+        disp = fmt(v)
+    else:
+        num, disp = None, "; ".join(fmt(x) for x in vals[:max_rows]) + (f" (+{n - max_rows} more)" if n > max_rows else "")
+    ev = []
+    for i in range(min(n, 3)):
+        c = cell(i)
+        loc = (f"sheet '{info['sheet']}' cell {c}" if c and info.get("sheet") else
+               f"filter: {describe(filters)}; field {field}")
+        ev.append({"source_id": source_id, "locator": loc, "claim": f"{field} = {fmt(vals[i])}"})
+    if not n:
+        ev = [_ev(source_id, filters, "no matching row")]
+    return {"op": "value", "value": num if n == 1 else vals[:max_rows], "display": disp if n else "no matching row",
+            "n_hits": n, "field": field, "cells": [cell(i) for i in range(min(n, 3))], "evidence": ev}
 
 
 def variants(df, field, normalized_value, source_id=""):

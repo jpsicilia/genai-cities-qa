@@ -49,6 +49,27 @@ python scripts/validate_submission.py runs/submission.md
 
 `make_submission.py` caches finished questions in `runs/cache.jsonl` and can be resumed after an interruption.
 
+## Automatic profile (families without a hand-written profile)
+
+`tools/autoload.py` reads any tabular source: delimited text (delimiter, encoding, BOM and decimal comma detected),
+spreadsheets (header row detected; `_row` keeps the real Excel row so answers cite cells such as `E31`), JSON
+(record lists, CKAN results, GeoJSON properties; nested lists of objects become child tables keyed by the parent
+ID; lists of objects inside metadata become small tables) and GeoPackage/GML/GeoJSON attributes. Numbers are
+converted only when a whole column is numeric; codes with leading zeros stay text. Nothing is filled or repaired.
+
+`tools/autoprofile.py` builds a profile from a question's `Source_IDs`: one table per distinct dataset (the same
+data supplied as GML, GeoJSON and GPKG counts once), a `combined` table when sibling layers share their columns
+and have disjoint keys, lazy loading of large CSVs, and per-question focus on the most relevant tables. The
+planner also receives the guide sentences most related to the question. New tools: `value` (a field in the
+row(s) chosen by filters, with its cell reference), `sum`, `extreme` with `which=min`. Differences, percentage
+changes and ratios between planned numbers are computed by Python (`pipeline/derived.py`), never by the model.
+
+```bash
+python -u scripts/make_submission.py --auto --dry-run        # coverage
+python -u scripts/eval_auto.py --fake                        # reference plans: table names and tools exist
+python -u scripts/eval_auto.py                               # model plans vs reference plans (own questions)
+```
+
 ## Inspect sources of families without a profile
 
 ```bash

@@ -14,6 +14,8 @@ from tools import spatial as S
 from tools import tabular as T
 
 CAT_OPS = ("eq", "ne", "in", "not_in")
+MIN_RE = re.compile(r"\b(lowest|smallest|minimum|least|earliest|fewest|shortest|min)\b", re.I)
+MAX_RE = re.compile(r"\b(highest|largest|maximum|most|latest|biggest|greatest|longest|max)\b", re.I)
 
 
 def _repair_value(series, value, notes):
@@ -80,6 +82,13 @@ def _clean_filters(df, filters, notes):
         if f.get("field") not in df.columns:
             notes.append(f"dropped filter on unknown field {f.get('field')!r}")
             continue
+        if pd.api.types.is_numeric_dtype(df[f["field"]]) and f["op"] in CAT_OPS + ("gt", "ge", "lt", "le"):
+            f["value"] = ([T._num_or_same(x) for x in f["value"]] if isinstance(f.get("value"), list)
+                          else T._num_or_same(f.get("value")))        # '2012' -> 2012 en columnas numéricas
+            if isinstance(f["value"], float) and f["value"].is_integer():
+                f["value"] = int(f["value"])
+            if isinstance(f["value"], list):
+                f["value"] = [int(x) if isinstance(x, float) and x.is_integer() else x for x in f["value"]]
         if f["op"] in CAT_OPS and not pd.api.types.is_numeric_dtype(df[f["field"]]):
             v = f.get("value")
             if isinstance(v, list):
@@ -336,9 +345,16 @@ def run_call(call, profile, question="", n_percent_calls=0):
         res["field"] = field
         res["kind"] = "band lower-edge" if mp else ("positive-only" if call.get("positive_only") else "raw")
     elif tool == "extreme":
-        res = T.extreme(df, field, filters, id_field=tcfg.get("key"), source_id=sid,
-                        show=[c for c in df.columns if c != tcfg.get("key")
+        which = call.get("which") if call.get("which") in ("max", "min") else (
+            "min" if MIN_RE.search(question or "") and not MAX_RE.search(question or "") else "max")
+        res = T.extreme(df, field, filters, which=which, id_field=tcfg.get("key"), source_id=sid,
+                        show=[c for c in df.columns if c != tcfg.get("key") and not str(c).startswith("_")
                               and not pd.api.types.is_numeric_dtype(df[c])][:4])
+    elif tool == "sum":
+        res = T.sum_(df, field, filters, source_id=sid)
+    elif tool == "value":
+        info = profile.info(alias) if hasattr(profile, "info") else {}
+        res = T.value(df, field or tcfg.get("key"), filters, info=info, source_id=sid)
     elif tool == "distinct":
         res = T.distinct(df, field or tcfg.get("key"), filters, source_id=sid)
     elif tool == "lookup":
@@ -387,6 +403,10 @@ def run_call(call, profile, question="", n_percent_calls=0):
         res["den_filters"] = call.get("denominator") or []
     res["label"] = _label(call)
     res["notes"] = notes
+    extra = profile.combined_sources(alias) if hasattr(profile, "combined_sources") else []
+    for sid2, layer, n in extra:            # tabla combinada: cada capa cita su propia fuente
+        res.setdefault("evidence", []).append({"source_id": sid2, "locator": f"all records of layer {layer}",
+                                               "claim": f"{n} records included in the combined calculation"})
     return res
 
 
@@ -478,6 +498,8 @@ def _grounded(f, q, qtok, profile):
         if x is None:
             continue
         if isinstance(x, (int, float)) and str(x).replace(".0", "") in q:
+            return True
+        if isinstance(x, str) and len(x.strip()) >= 2 and x.strip().lower() in q:   # '12/13' tal cual
             return True
         if _tokens(x) & qtok:
             return True

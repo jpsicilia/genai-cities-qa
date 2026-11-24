@@ -13,9 +13,22 @@ WHY_RE = re.compile(r"\b(why|explain|explanation|how come|what explains|account 
 SKIP_FIELDS = {"_id", "FID", "geometry", "geometrie_gdo"}
 
 
+SHARE_RE = re.compile(r"\b(share|percent|percentage|proportion|fraction)\b|%", re.I)
+
+
 def _tbl(r):
     t = str(r.get("table") or "")
-    return t.upper() if 0 < len(t) <= 4 else t
+    return t.upper() if 0 < len(t) <= 4 and not re.search(r"[aeiou]", t) else t   # dcc, dlr; no 'day', 'data'
+
+
+def _recs(n, T):
+    """'3 day records'; si la tabla ya se llama 'records' no repetir la palabra."""
+    return f"{n} records" if T.lower() in ("records", "rows", "data", "records_records") else f"{n} {T} records"
+
+
+def _rowphrase(r):
+    fl = r.get("filters") or []
+    return " and ".join(_fphrase(f) for f in fl) if fl else None
 
 
 CMP = {"gt": ">", "ge": "≥", "lt": "<", "le": "≤"}
@@ -94,7 +107,7 @@ def _prefix_sentence(r):
 
 def _num(x):
     if isinstance(x, float):
-        return f"{x:g}" if x.is_integer() else f"{x:.2f}"
+        return f"{x:.0f}" if x.is_integer() else f"{x:.2f}"
     return str(x)
 
 
@@ -138,7 +151,7 @@ def fact(r, question=""):
         vp = _vp(r)
         if not vp:
             return f"The {T} table has {r['value']} records."
-        return f"{r['value']} of the {r['total_rows']} {T} records {vp}." + _prefix_sentence(r)
+        return f"{r['value']} of the {_recs(r['total_rows'], T)} {vp}." + _prefix_sentence(r)
     if op == "percent":
         den = r.get("den_filters") or []
         vp = _vp(r, [f for f in (r.get("filters") or []) if f not in den] if r.get("filters") is not None
@@ -150,12 +163,17 @@ def fact(r, question=""):
         return f"{r['numerator']} of {scope} {vp}, which is {d}."
     if op == "mean":
         rem = f", after removing {r['n_removed']} non-positive values" if r.get("kind") == "positive-only" else ""
-        return f"The {r.get('kind', 'raw')} mean of {r.get('field')} is {d} over {r.get('n_used')} {T} records{_where(r)}{rem}."
+        return f"The {r.get('kind', 'raw')} mean of {r.get('field')} is {d} over {_recs(r.get('n_used'), T)}{_where(r)}{rem}."
     if op in ("max", "min"):
         if not r.get("n_hits"):
             return f"No {T} records{_where(r)} have a numeric {r.get('field')} value."
         key = r.get("id_field")
-        ids = [str(x.get(key)) for x in (r.get("records") or []) if key in x][:5]
+        recs = r.get("records") or []
+        extra = [c for c in (recs[0] if recs else {}) if c != key and not str(c).startswith("_")]
+        named = [c for c in extra if c.lower() in (question or "").lower()]
+        show = (named or extra)[:1]                 # p. ej. la fecha (dteday) junto al id del registro
+        ids = [str(x.get(key)) + "".join(f" ({c} {x.get(c)})" for c in show if x.get(c) is not None)
+               for x in recs if key in x][:5]
         word = "maximum" if op == "max" else "minimum"
         return (f"The {word} {r.get('field')} among {T} records{_where(r)} is {d}, reached by "
                 f"{_plural(r.get('n_hits'), 'record')}"
@@ -170,17 +188,47 @@ def fact(r, question=""):
         return s + "."
     if op in ("lookup", "record"):
         return _record_sentence(r, question)
+    if op == "sum":
+        nn = f" ({r['n_null']} null values left out)" if r.get("n_null") else ""
+        return f"The sum of {r.get('field')} over {_recs(r.get('n_used'), T)}{_where(r)} is {d}{nn}."
+    if op == "value":
+        rp, n = _rowphrase(r), r.get("n_hits", 0)
+        where = f"the row with {rp}" if rp else "the first row"
+        if n == 0:
+            return f"No {T} row{(' with ' + rp) if rp else ''} was found."
+        cell = (r.get("cells") or [None])[0]
+        if n == 1:
+            return f"In {T}, {where} has {r.get('field')} = {d}" + (f" (cell {cell})" if cell else "") + "."
+        return f"In {T}, {n} rows{(' with ' + rp) if rp else ''} have {r.get('field')} = {d}."
+    if op == "derived":
+        from pipeline.derived import fmt_num
+        if r.get("kind") == "change":
+            unit = " percentage points" if r.get("pp") else ""
+            what = r.get("field") or "the value"
+            s = (f"From {r['a']} ({fmt_num(r['va'])}) to {r['b']} ({fmt_num(r['vb'])}), {what} changes by "
+                 f"{'+' if r['diff'] >= 0 else ''}{fmt_num(r['diff'])}{unit}")
+            if r.get("pct") is not None:
+                s += f", which is {r['pct']:+.2f}% relative to {r['a']}"
+            return s + "."
+        if r.get("kind") == "ratio":
+            s = (f"Dividing {r.get('fa') or 'the first value'} ({fmt_num(r['va'])}) by {r.get('fb') or 'the second'} "
+                 f"({fmt_num(r['vb'])}) gives {fmt_num(r['ratio'])}")
+            return s + (f", i.e. {100 * r['ratio']:.2f}%" if r.get("as_pct") else "") + "."
+        return d
     if op == "group_count":
         top = (r.get("value") or [(None, 0)])[0]
         if top[0] is None:
             return f"No {T} records{_where(r)} have a {r.get('field')} value."
+        share = (f" ({r['share_display']} of {r['total']} records)" if r.get("total") and SHARE_RE.search(question or "")
+                 else "")
+        tie = (" — tied with " + ", ".join(repr(t) for t in r["ties"])) if r.get("ties") else ""
         sp = r.get("by_spelling")
         if sp:  # etiqueta = la grafía más frecuente (value_counts va de mayor a menor), sin espacios extremos
             label = str(next(iter(sp))).strip()
             return (f"Ignoring letter case and surrounding spaces, the most frequent {r.get('field')} among {T} "
                     f"records{_where(r)} is {label!r} with {top[1]} records ("
-                    + ", ".join(f"{k!r} {n}" for k, n in sp.items()) + ").")
-        return f"The most frequent {r.get('field')} among {T} records{_where(r)} is {top[0]!r} with {top[1]} records."
+                    + ", ".join(f"{k!r} {n}" for k, n in sp.items()) + f"){share}{tie}.")
+        return f"The most frequent {r.get('field')} among {T} records{_where(r)} is {top[0]!r} with {top[1]} records{share}{tie}."
     if op == "variants":
         parts = ", ".join(f"'{k}' {n}" for k, n in (r.get("by_spelling") or {}).items())
         return f"Ignoring letter case, {T} has {r['value']} records for this name" + (f": {parts}" if parts else "") + "."

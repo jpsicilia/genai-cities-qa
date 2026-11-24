@@ -214,3 +214,9 @@ def test_normalised_ranking_reports_spelling_split(P):
     q = "Which DCC street label has the most records after normalisation?"
     r = executor.execute({"calls": [{"tool": "group_count", "table": "dcc", "field": "Street"}]}, P, q)[0]
     assert "by spelling" in r["display"] and r["by_spelling"]
+
+
+def test_short_period_label_written_in_question_is_grounded():
+    from pipeline.executor import _grounded
+    q = "what average fbe claims figure is reported for 12/13?"
+    assert _grounded({"field": "Year", "op": "eq", "value": "12/13"}, q, set(), type("P", (), {"cfg": {}})())

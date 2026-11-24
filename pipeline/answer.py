@@ -4,7 +4,7 @@ import json
 import os
 import time
 
-from pipeline import cite, compose, executor, llm, planner, verdicts, writer
+from pipeline import cite, compose, derived, executor, llm, planner, verdicts, writer
 from tools import guides
 
 
@@ -19,7 +19,13 @@ def profile_source_ids(profile):
 def answer(qid, question, profile, verbose=False, source_ids=None):
     t0 = time.time()
     budget = llm.Budget()
-    tables = {a: profile.table(a) for a in profile.plan_tables()}
+    if profile.cfg.get("auto"):        # perfil automático: solo las tablas pertinentes, descritas con su muestra
+        if not profile.cfg["tables"]:
+            raise ValueError("auto profile: no tabular source could be read for this question")
+        profile.focus(question)
+        tables = {a: (profile.sample(a), profile.cfg["tables"][a]["source_id"]) for a in profile.plan_tables()}
+    else:
+        tables = {a: profile.table(a) for a in profile.plan_tables()}
     columns = sorted({c for df, _ in tables.values() for c in df.columns})
 
     raw_plan = llm.chat(planner.build_messages(question, profile, tables), budget,
@@ -30,6 +36,7 @@ def answer(qid, question, profile, verbose=False, source_ids=None):
         plan = {"calls": []}
     plan = executor.route(question, plan, profile)
     results = executor.execute(plan, profile, question)
+    results += derived.derive(question, results)
 
     idx, gids = guides.guides_for(source_ids or profile_source_ids(profile))
     # los filtros que de verdad se aplicaron ("uuid_tlm3d is blank (null/empty after trim)") y sinónimos

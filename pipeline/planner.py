@@ -14,7 +14,9 @@ TOOLS = {
     "count": "number of records matching filters",
     "percent": "percentage of records matching filters within a denominator ('denominator' filters; empty = all rows)",
     "mean": "mean of 'field' over matching records (positive_only=true only if asked; mapping for band lower edges)",
-    "extreme": "max of numeric 'field' and ALL records reaching it",
+    "extreme": "max of numeric 'field' (or min with which='min') and ALL records reaching it",
+    "sum": "sum of numeric 'field' over matching records",
+    "value": "read 'field' in the row(s) selected by filters (e.g. a year, a code, an id); use it to compare rows",
     "distinct": "distinct non-null values, nulls, repeated values and dedupe losses of 'field'",
     "lookup": "read one record by the table key ('key')",
     "record": "read records by 'ids' using 'key_field' (default: table key); use to compare rows across tables",
@@ -36,12 +38,18 @@ TOOLS = {
 }
 
 
-def _table_summary(alias, df, cfg, max_cats=40):
+AUTO_CTX_CHARS = 14000      # tope de descripción de tablas en perfiles automáticos (num_ctx 8192)
+
+
+def _table_summary(alias, df, cfg, max_cats=40, max_cols=None, hide_private=False):
     lines = [f"TABLE {alias} ({len(df)} rows, key={cfg.get('key')}). {cfg.get('description', '')}", "  Columns:"]
-    for c in df.columns:
+    cols = [c for c in df.columns if not (hide_private and str(c).startswith("_") and c not in ("_row", "_layer"))]
+    for c in cols[:max_cols]:
         s = df[c]
         if s.isna().all():
             lines.append(f"  - {c}: always null")
+        elif s.dropna().head(50).map(lambda x: isinstance(x, (list, dict))).any():
+            lines.append(f"  - {c}: nested list/object (see child tables)")
         elif pd.api.types.is_numeric_dtype(s):
             lines.append(f"  - {c}: number (min {s.min():g}, max {s.max():g}, {int(s.isna().sum())} null)")
         else:
@@ -51,6 +59,8 @@ def _table_summary(alias, df, cfg, max_cats=40):
             else:
                 ex = json.dumps([str(v) for v in vals[:3]], ensure_ascii=False)
                 lines.append(f"  - {c}: text ({len(vals)} distinct), e.g. {ex}")
+    if max_cols and len(cols) > max_cols:
+        lines.append(f"  - … {len(cols) - max_cols} more columns: " + ", ".join(map(str, cols[max_cols:max_cols + 30])))
     return "\n".join(lines)
 
 
@@ -76,6 +86,7 @@ def build_schema(profile, columns):
                 "named_filter": {"type": "string", "enum": list(profile.cfg.get("named_filters", {})) + ["none"]},
                 "denominator": {"type": "array", "items": filt},
                 "positive_only": {"type": "boolean"},
+                "which": {"type": "string", "enum": ["max", "min"]},
                 "mapping": {"type": "string", "enum": list(profile.cfg.get("mappings", {})) + ["none"]},
                 "key": {}, "anchor": {}, "ids": {"type": "array"},
                 "radius": {"type": "number"}, "budget": {"type": "number"},
@@ -115,8 +126,31 @@ def examples(profile):
     return [(e["q"], e["plan"]) for e in ex] if ex else EXAMPLES
 
 
+def _auto_context(profile, tables):
+    """Descripciones compactas en orden de pertinencia, dentro de un tope de caracteres."""
+    parts, used = [], 0
+    for a, (df, _) in tables.items():
+        cfg = profile.cfg["tables"][a]
+        s = _table_summary(a, df, cfg, max_cats=15, max_cols=45, hide_private=True)
+        if used + len(s) > AUTO_CTX_CHARS and parts:
+            s = _table_summary(a, df, cfg, max_cats=6, max_cols=20, hide_private=True)
+            if used + len(s) > AUTO_CTX_CHARS:
+                break
+        parts.append(s)
+        used += len(s)
+    return "\n\n".join(parts)
+
+
+AUTO_HINTS = ("To read a number from one particular row (a year label, a period, a code, an id), use 'value' with "
+              "filters that select that row. Plan one call per number the question needs; the system itself computes "
+              "differences, percentage changes and ratios between those numbers. Text columns that only hold digits "
+              "(codes) are compared as text.")
+
+
 def build_messages(question, profile, tables):
-    ctx = "\n\n".join(_table_summary(a, df, profile.cfg["tables"][a]) for a, (df, _) in tables.items())
+    auto = bool(profile.cfg.get("auto"))
+    ctx = _auto_context(profile, tables) if auto else "\n\n".join(
+        _table_summary(a, df, profile.cfg["tables"][a]) for a, (df, _) in tables.items())
     nf = "\n".join(f"  - {k}: {v.get('table')} -> " + "; ".join(
         f"{f['field']} {f['op']} {f.get('value', '')}" for f in v["filters"]) for k, v in
         profile.cfg.get("named_filters", {}).items()) or "  (none)"
@@ -129,9 +163,14 @@ def build_messages(question, profile, tables):
         "Only set 'named_filter' when the question names that screen. For a percentage of ALL rows use an empty "
         "denominator; for 'rows with a recorded X' use denominator [X notnull]. Pick the table that has the fields. "
         "Copy identifiers (ids, anchor) exactly as written in the question. "
-        "If the question only asks for judgement and no number, use the 'columns' or 'metadata' tool.\n\n"
+        "If the question only asks for judgement and no number, use the 'columns' or 'metadata' tool.\n"
+        + (AUTO_HINTS + "\n" if auto else "") + "\n"
         f"TOOLS:\n{tools}\n\nNAMED FILTERS:\n{nf}\n\n{ctx}"
     )
+    if auto:
+        notes = profile.notes_for(question)
+        if notes:
+            system += "\n\nSOURCE NOTES (from the data guides):\n" + "\n".join(f"- {n[:300]}" for n in notes)
     msgs = [{"role": "system", "content": system}]
     for q, plan in examples(profile):
         msgs += [{"role": "user", "content": q}, {"role": "assistant", "content": json.dumps(plan, ensure_ascii=False)}]

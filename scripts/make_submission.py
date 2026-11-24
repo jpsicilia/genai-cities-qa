@@ -16,6 +16,8 @@ Uso:
   python -u scripts/make_submission.py --domain urban_greenery --pause 3   # pausa de 3 s entre preguntas (calor)
   python -u scripts/make_submission.py --no-run                  # solo re-armar el .md desde la caché
   python -u scripts/make_submission.py --ids <ID> --refresh      # rehacer preguntas puntuales
+  python -u scripts/make_submission.py --auto --dry-run          # cobertura con el perfil automático
+  python -u scripts/make_submission.py --auto --domain transport --limit 10   # probar familias sin perfil
 """
 import argparse
 import json
@@ -24,6 +26,7 @@ import re
 import sys
 import time
 from collections import Counter
+from functools import lru_cache
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -32,6 +35,7 @@ import pandas as pd  # noqa: E402
 from pipeline import answer as A  # noqa: E402
 from pipeline import submission as SUB  # noqa: E402
 from tools import loaders  # noqa: E402
+from tools.autoprofile import AutoProfile, has_tables  # noqa: E402
 from tools.profiles import profile_for  # noqa: E402
 
 
@@ -54,6 +58,19 @@ def load_cache(path):
     return cache
 
 
+class _Auto:
+    name = "auto"
+
+
+AUTO = _Auto()
+
+
+@lru_cache(maxsize=2)
+def auto_profile(sids):
+    """Un perfil automático por familia; las preguntas de la misma familia lo reutilizan."""
+    return AutoProfile(list(sids))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="runs/submission.md")
@@ -67,12 +84,18 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="solo mostrar la cobertura por perfil")
     ap.add_argument("--pause", type=float, default=0.0, help="segundos de pausa entre preguntas")
     ap.add_argument("--max-bytes", type=int, default=SUB.TARGET)
+    ap.add_argument("--auto", action="store_true",
+                    help="perfil automático para las preguntas sin perfil escrito a mano (fuentes tabulares)")
     args = ap.parse_args()
 
     test = pd.read_csv(os.path.join(loaders.DATA, "Test.csv")).set_index("ID")
     order = sample_order() or list(test.index)
     sids = {q: json.loads(test.at[q, "Source_IDs"]) for q in order}
     prof = {q: profile_for(sids[q]) for q in order}
+    if args.auto:
+        for q in order:
+            if prof[q] is None and has_tables(sids[q]):
+                prof[q] = AUTO                                     # se construye al llegar a la pregunta
 
     cov = Counter((p.name if p else "(sin perfil)") for p in prof.values())
     print("cobertura por perfil:", dict(cov))
@@ -98,12 +121,15 @@ def main():
                 p, t0 = prof[q], time.time()
                 rec = {"id": q, "domain": test.at[q, "Domain"], "profile": p.name}
                 try:
+                    if p is AUTO:
+                        p = auto_profile(tuple(sorted(sids[q])))
                     _, info = A.answer(q, test.at[q, "Question"], p, source_ids=sids[q])
                     rec.update(answered=True, text=info["text"], evidence=info["evidence"], calls=info["calls"],
                                tokens=info["tokens"], tools=info["tools"], seconds=info["seconds"])
                     errors_in_row = 0
                 except Exception as ex:  # noqa: BLE001 - una pregunta mala no tumba la corrida
-                    errors_in_row += 1
+                    # solo los fallos de conexión con Ollama cuentan para cortar; un archivo raro no
+                    errors_in_row = errors_in_row + 1 if re.search(r"connect|refused|ollama", repr(ex), re.I) else 0
                     rec.update(answered=False, error=repr(ex)[:300], seconds=round(time.time() - t0, 1))
                     if errors_in_row >= 3:
                         print("\n3 errores seguidos: ¿está corriendo Ollama? Corto aquí. Último error:", rec["error"])
