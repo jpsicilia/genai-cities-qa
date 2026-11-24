@@ -39,7 +39,8 @@ def answer(qid, question, profile, verbose=False, source_ids=None):
     try:
         for part in verdicts.yes_no_parts(question)[:3]:
             notes = idx.search(guides.expand(f"{part} {part} {question} {ftext}"), gids, k=3) if gids else []
-            v = verdicts.ask(part, question, writer._facts(results), profile, budget, notes)
+            v = verdicts.ask(part, question, writer._facts(results), profile, budget, notes,
+                             scorer=idx.overlap if notes else None)
             if v:
                 vlist.append(v)
         if os.environ.get("GENAI_WRITER", "template") == "llm":   # redactor viejo, para comparar

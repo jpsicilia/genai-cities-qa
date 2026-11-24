@@ -53,3 +53,27 @@ def test_evidence_lines_put_verdict_note_after_numbers():
     out = writer.evidence_lines(res, P(), v)
     assert len(out) == 4 and out[2].startswith("- SRC_g | SourceGuide.md ¶3")
     assert not any("SRC_an" in x for x in out)   # con nota citada, no hace falta la línea genérica
+
+
+def test_cited_note_follows_the_reason_not_the_position(monkeypatch):
+    """El modelo elige [1] por posición, pero su razón parafrasea la nota [3]: se cita la [3]."""
+    import json
+    from pipeline import llm
+    from tools import guides as G
+
+    monkeypatch.setattr(llm, "chat", lambda m, b, schema=None, max_tokens=800: json.dumps(
+        {"verdict": "No", "reason": "Native nulls stay null and are not filled, so they are not invalid", "note": "1"}))
+
+    class P:
+        cfg = {"rules_for_llm": []}
+
+    text = ("Do not repair invalid geometries or silently drop them. Count records, not inferred physical trees. "
+            "Use native nulls without filling them. Round requested distances to two decimals.")
+    idx = G.GuideIndex(G.split_units(text, "SRC_r", "ReadingGuide.txt"))
+    by = {u["text"].split()[0]: u for u in idx.units}
+    notes = [by["Do"], by["Count"], by["Use"]]          # el orden en que BM25 las dio en el caso real
+    v = verdicts.ask("Are those invalid trees?", "q", "facts", P(), llm.Budget(), notes, scorer=idx.overlap)
+    assert v["evidence"]["claim"] == "Use native nulls without filling them." and v["note_rerank"].startswith("1 ->")
+    # sin scorer se respeta la elección del modelo
+    v2 = verdicts.ask("Are those invalid trees?", "q", "facts", P(), llm.Budget(), notes)
+    assert v2["evidence"]["claim"].startswith("Do not repair")

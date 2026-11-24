@@ -36,8 +36,14 @@ def _clip(text, n):
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
 
-def ask(part, question, facts, profile, budget, notes=None):
-    """notes: frases de las guías (BM25). El modelo elige cuál respalda su veredicto y Python la cita."""
+ADOPT_MIN = 4.0   # si el modelo dijo "none", solo se cita una nota que comparta palabras específicas con su razón
+
+
+def ask(part, question, facts, profile, budget, notes=None, scorer=None):
+    """notes: frases de las guías (BM25). El modelo elige cuál respalda su veredicto y Python la cita.
+
+    scorer(razón, nota) -> float (p. ej. GuideIndex.overlap): un modelo chico tiende a elegir la nota [1]
+    aunque su razón parafrasee otra; entonces se cita la nota que más se parece a la razón que dio."""
     notes = notes or []
     rules = "\n".join(f"- {x}" for x in profile.cfg.get("rules_for_llm", []))
     system = ("You judge what frozen city datasets can and cannot support. Answer the yes/no question with "
@@ -60,8 +66,15 @@ def ask(part, question, facts, profile, budget, notes=None):
     except (json.JSONDecodeError, KeyError):
         return None
     sel = str(d.get("note", "none"))
-    if sel.isdigit() and 1 <= int(sel) <= len(notes):
-        n = notes[int(sel) - 1]
+    pick = int(sel) - 1 if sel.isdigit() and 1 <= int(sel) <= len(notes) else None
+    if scorer and notes and v["reason"]:
+        sc = [scorer(f"{v['reason']} {part}", n["text"]) for n in notes]
+        best = max(range(len(notes)), key=lambda i: (sc[i], i == pick))
+        if (pick is None and sc[best] >= ADOPT_MIN) or (pick is not None and sc[best] > sc[pick]):
+            v["note_rerank"] = f"{sel} -> {best + 1}"
+            pick = best
+    if pick is not None:
+        n = notes[pick]
         v["evidence"] = {"source_id": n["source_id"], "locator": f"{n['file']} ¶{n['para']}",
                          "claim": _clip(n["text"], 150), "text": n["text"]}
     return v

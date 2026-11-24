@@ -49,7 +49,7 @@ def evidence_lines(results, profile, verdict_list=None, max_lines=4, conv=None):
     veredictos, luego el resto y al final la frase de convención (cite.convention) si cabe. Sin frase de
     convención ni nota de veredicto, queda la línea genérica de la guía de análisis."""
     def line(e):
-        return f"- {e['source_id']} | {_clip(e['locator'], 110)} | {_clip(e['claim'], 110)}"
+        return f"- {e['source_id']} | {_clip(e['locator'], 150)} | {_clip(e['claim'], 130)}"
 
     seen, tool_l, verd_l = set(), [], []
     for r in results:

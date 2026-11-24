@@ -21,7 +21,8 @@ TOKEN_RE = re.compile(r"[a-z0-9äöüßéèàçñ]+")
 SENT_RE = re.compile(r"(?<=[.!?;])\s+(?=[A-Z0-9(\"'“])")
 STOP = set("""a an and are as at be been but by can could did do does for from had has have how if in into
 is it its of on or our should so than that the their them then there these this those to was we were what
-when which who will with would you your i me my any all just also may might must only own same such""".split())
+when which who will with would you your i me my any all just also may might must only own same such
+not no nor""".split())
 GUIDE_EXT = (".md", ".txt")
 
 
@@ -145,6 +146,12 @@ class GuideIndex:
                        for u in units]
         df = Counter(t for d in self.docs for t in set(d))
         self.idf = {t: math.log(1 + (self.N - n + 0.5) / (n + 0.5)) for t, n in df.items()}
+
+    def overlap(self, a, b):
+        """Suma de idf de las raíces que comparten dos textos (cada raíz una vez). Mide cuánto respalda
+        una nota lo que dice una razón; las palabras comunes pesan poco y las específicas mucho."""
+        top = max(self.idf.values(), default=1.0)
+        return sum(self.idf.get(t, top) for t in set(tokenize(a)) & set(tokenize(b)))
 
     def search(self, query, allowed_sources=None, k=3, k1=1.5, b=0.75, kinds=None):
         q = tokenize(query)
