@@ -28,6 +28,7 @@ import pandas as pd  # noqa: E402
 from tools import loaders, profiles  # noqa: E402
 
 TEXT_EXT = {".md", ".txt", ".html", ".htm", ".xsd"}
+PIP_NAME = {"PIL": "pillow", "odf": "odfpy", "laspy": '"laspy[lazrs]"', "lazrs": '"laspy[lazrs]"'}
 
 
 # ------------------------------------------------------------------ utilidades
@@ -356,7 +357,8 @@ def dump_source(sid, man, max_kb):
         else:
             out.append("  (formato sin volcador)")
     except ImportError as e:
-        out.append(f"  (falta un paquete opcional: {e.name}; pip install {e.name})")
+        pkg = PIP_NAME.get((e.name or "").split(".")[0], e.name)
+        out.append(f"  (falta un paquete opcional: pip install {pkg})")
     except Exception as e:  # noqa: BLE001
         out.append(f"  ERROR {type(e).__name__}: {clip(e, 200)}")
     txt = "\n".join(out)
