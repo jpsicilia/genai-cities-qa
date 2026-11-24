@@ -122,6 +122,25 @@ def build(root):
     add("berlin", "SRC_g1", "anlagenbaeume.geojson", "Berlin Senatsverwaltung", writer=lambda p: layer(p, "p", 0))
     add("berlin", "SRC_g2", "strassenbaeume.geojson", "Berlin Senatsverwaltung", writer=lambda p: layer(p, "s", 1))
 
+    # --- el mismo experimento en CSV y en libro Excel (columnas X/Y; la hoja trae filas vacías al final)
+    cols = ["X1", "X5", "X6", "Y1"]
+    vals = [(0.9, 7, 2, 11.5), (0.9, 7, 3, 12.25), (0.8, 3.5, 2, 9.75), (0.8, 3.5, 3, 8.5), (0.7, 3.5, 4, 7.0)]
+    add("tsanas", "SRC_x1", "data.csv", "Tsanas / UCI",
+        ",".join(cols) + "\n" + "".join(f"{a:.2f},{b:.2f},{c},{d:.2f}\n" for a, b, c, d in vals))
+
+    def xlsx_book(path):
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Φύλλο1"
+        ws.append(cols)
+        for r in vals:
+            ws.append(list(r))
+        for _ in range(3):
+            ws.append([None] * len(cols))
+        wb.save(path)
+    add("tsanas", "SRC_x2", "ENB_data.xlsx", "Tsanas / UCI", writer=xlsx_book)
+
     # --- metadatos UCI con lista de variables
     add("uci_meta", "SRC_u1", "Metadata.json", "UCI", json.dumps(
         {"status": 200, "data": {"name": "Energy", "variables": [

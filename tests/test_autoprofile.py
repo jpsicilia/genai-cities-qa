@@ -51,7 +51,7 @@ def test_formats_are_read_faithfully(fams):
     assert e["MT_162"].tolist()[0] == 150.5 and str(e["timestamp"].dtype) != "float64"
     t = AutoProfile(fams["toulouse"])
     assert list(t._t) == ["records"] and "type" in t.sample("records").columns   # BOM fuera del nombre
-    assert "SRC_t2" in t.cfg["tables"]["records"]["description"]               # JSON = misma tabla
+    assert "records.json" in t.cfg["tables"]["records"]["description"]         # JSON = misma tabla
 
 
 def test_spreadsheet_keeps_excel_rows_and_letters(fams):
@@ -78,6 +78,30 @@ def test_focus_picks_the_table_the_question_names(fams):
     P = AutoProfile(fams["bike"])
     assert P.focus("How many hourly rows have hr 3 on 2012-02-29?")[0] == "hour"
     assert has_tables(fams["bike"]) and not has_tables(["SRC_b3"])  # solo la guía: nada tabular
+
+
+def test_description_names_file_format_and_copies(fams):
+    t = AutoProfile(fams["toulouse"]).cfg["tables"]["records"]["description"]
+    assert t.startswith("from records.csv (CSV file)") and "same data also supplied as records.json" in t
+    d = AutoProfile(fams["durban"]).cfg["tables"]["electricity_use"]["description"]
+    assert "from electricity-use.xlsx (Excel workbook)" in d and "sheet 'Sheet1'" in d
+    c = AutoProfile(fams["berlin"]).cfg["tables"]["combined"]["description"]
+    assert c.startswith("all records of")                          # la combinada no viene de un archivo
+
+
+def test_focus_follows_the_named_format(fams):
+    P = AutoProfile(fams["tsanas"])
+    assert sorted(P._t) == ["data", "enb_data"] and len(P.sample("enb_data")) == 5   # filas vacías fuera
+    assert P.focus("In the workbook, which X5 value occurs in the most rows?")[0] == "enb_data"
+    assert P.focus("In the CSV, how many rows have X6 = 3?")[0] == "data"
+    assert P.focus("In the daily file, what is the mean Y1?") == P.focus("what is the mean Y1?")  # sin efecto raro
+
+
+def test_run_order_groups_each_family_once():
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    from make_submission import by_family
+    sids = {"a1": ["S1", "S2"], "b1": ["S3"], "a2": ["S2", "S1"], "c1": ["S4"], "b2": ["S3"]}
+    assert by_family(["a1", "b1", "a2", "c1", "b2"], sids) == ["a1", "a2", "b1", "b2", "c1"]
 
 
 # ------------------------------------------------------------------ respuestas

@@ -1,6 +1,7 @@
 """Genera la entrega completa desde Test.csv.
 
-- Orden: el de data/SampleSubmission.md (si existe) o el de Test.csv.
+- Orden del archivo: el de data/SampleSubmission.md (si existe) o el de Test.csv. Orden de corrida: por familia
+  (mismas fuentes seguidas), para armar cada perfil automático una sola vez.
 - Cada pregunta: se elige el perfil por sus Source_IDs. Con perfil -> pipeline completo.
   Sin perfil (familias que todavía no soportamos) -> respuesta corta de respaldo.
 - Caché en runs/cache.jsonl: se puede cortar con Ctrl+C y reanudar sin repetir preguntas.
@@ -45,6 +46,17 @@ def sample_order():
         return None
     with open(path, encoding="utf-8") as fh:
         return re.findall(r"^## (\S+)\s*$", fh.read(), re.M)
+
+
+def by_family(qids, sids):
+    """Orden de corrida: las preguntas de una misma familia (mismas fuentes) seguidas, cada familia donde aparece
+    por primera vez y, dentro de ella, el orden original. El Test viene barajado (63 conjuntos de fuentes en
+    589 tramos); así el perfil automático se arma una vez por familia y no una vez por pregunta.
+    El archivo final se arma igual en el orden de SampleSubmission."""
+    first = {}
+    for i, q in enumerate(qids):
+        first.setdefault(tuple(sorted(sids[q])), i)
+    return sorted(qids, key=lambda q: first[tuple(sorted(sids[q]))])
 
 
 def load_cache(path):
@@ -107,7 +119,7 @@ def main():
     selected = [q for q in order if prof[q] is not None
                 and (not args.domain or test.at[q, "Domain"] == args.domain)
                 and (not args.ids or q in args.ids)]
-    todo = [q for q in selected if args.refresh or q not in cache or not cache[q].get("answered")]
+    todo = by_family([q for q in selected if args.refresh or q not in cache or not cache[q].get("answered")], sids)
     if args.limit is not None:
         todo = todo[: args.limit]
     if args.no_run:

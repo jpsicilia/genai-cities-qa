@@ -144,7 +144,8 @@ def _auto_context(profile, tables):
 AUTO_HINTS = ("To read a number from one particular row (a year label, a period, a code, an id), use 'value' with "
               "filters that select that row. Plan one call per number the question needs; the system itself computes "
               "differences, percentage changes and ratios between those numbers. Text columns that only hold digits "
-              "(codes) are compared as text.")
+              "(codes) are compared as text. When the question names a file or a format (the CSV, the workbook, "
+              "the GeoJSON, the hourly file), use the table whose name or 'from ...' description matches it.")
 
 
 def build_messages(question, profile, tables):

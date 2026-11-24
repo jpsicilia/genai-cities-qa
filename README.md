@@ -59,10 +59,14 @@ converted only when a whole column is numeric; codes with leading zeros stay tex
 
 `tools/autoprofile.py` builds a profile from a question's `Source_IDs`: one table per distinct dataset (the same
 data supplied as GML, GeoJSON and GPKG counts once), a `combined` table when sibling layers share their columns
-and have disjoint keys, lazy loading of large CSVs, and per-question focus on the most relevant tables. The
+and have disjoint keys, lazy loading of large CSVs, and per-question focus on the most relevant tables. Each
+table is described by its original file and format ("from data.csv (CSV file)", "Excel workbook"), so questions
+that say "in the CSV" or "in the workbook" reach the right table. The
 planner also receives the guide sentences most related to the question. New tools: `value` (a field in the
 row(s) chosen by filters, with its cell reference), `sum`, `extreme` with `which=min`. Differences, percentage
 changes and ratios between planned numbers are computed by Python (`pipeline/derived.py`), never by the model.
+`make_submission.py` runs the questions family by family (Test.csv is shuffled), so each automatic profile is
+built once; the output file keeps the SampleSubmission order.
 
 ```bash
 python -u scripts/make_submission.py --auto --dry-run        # coverage

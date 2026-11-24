@@ -24,6 +24,15 @@ TOKEN_RE = re.compile(r"[a-z0-9äöüßéèàçñ]+")
 STOP = guides.STOP | {"many", "much", "give", "which", "what", "record", "records", "row", "rows", "file", "data",
                       "number", "value", "values", "total", "please", "use", "using", "supplied", "table"}
 
+# cómo llaman las preguntas a cada formato ("in the CSV", "the workbook"): va a la descripción y al focus
+FMT = {".csv": "CSV file", ".txt": "text table", ".xlsx": "Excel workbook", ".xlsm": "Excel workbook",
+       ".ods": "ODS spreadsheet", ".json": "JSON file", ".geojson": "GeoJSON file", ".gpkg": "GeoPackage",
+       ".gml": "GML file"}
+_BOOK = {"workbook", "spreadsheet", "excel", "sheet"}
+FMT_TOKENS = {".csv": {"csv"}, ".txt": {"txt"}, ".xlsx": _BOOK | {"xlsx"}, ".xlsm": _BOOK | {"xlsm"},
+              ".ods": _BOOK | {"ods"}, ".json": {"json"}, ".geojson": {"geojson"},
+              ".gpkg": {"geopackage", "gpkg"}, ".gml": {"gml"}}
+
 AUTO_TOOLS = ["count", "percent", "sum", "mean", "extreme", "distinct", "group_count", "value", "columns"]
 
 AUTO_EXAMPLES = [  # estructura, no nombres: el esquema JSON obliga a usar las tablas y columnas reales
@@ -47,9 +56,17 @@ AUTO_EXAMPLES = [  # estructura, no nombres: el esquema JSON obliga a usar las t
 ]
 
 
+def _orig(path):
+    """Nombre original del archivo, sin el prefijo SRC_xxx__."""
+    return os.path.basename(path).split("__", 1)[-1]
+
+
 def _stem(path):
-    base = os.path.basename(path).split("__", 1)[-1]
-    return os.path.splitext(base)[0]
+    return os.path.splitext(_orig(path))[0]
+
+
+def _ext(path):
+    return os.path.splitext(path or "")[1].lower()
 
 
 def _tokens(s):
@@ -102,7 +119,8 @@ class AutoProfile(Profile):
                     regs.append((stem, "", sid, path, sample, info, True))
                     continue
                 for suffix, df, info in A.read_any(path):
-                    regs.append((stem, suffix, sid, path, df, {**info, "rows": len(df)}, False))
+                    part = {"part": suffix} if suffix and not info.get("sheet") else {}
+                    regs.append((stem, suffix, sid, path, df, {**info, **part, "rows": len(df)}, False))
             except Exception as e:  # noqa: BLE001 — un archivo raro no debe tumbar la pregunta
                 regs.append((stem, "error", sid, path, pd.DataFrame(), {"error": f"{type(e).__name__}: {e}"}, False))
         # representaciones repetidas: mismo nombre, mismas columnas y mismas filas -> una sola
@@ -161,9 +179,22 @@ class AutoProfile(Profile):
                 df = pd.concat(frames, ignore_index=True, sort=False)
                 self._register("combined", self._t[group[0]]["sid"], None, df, {"rows": len(df), "combined_of": group})
 
+    def _file_of(self, sid):
+        try:
+            return _orig(loaders.path_of(sid))
+        except (KeyError, OSError):
+            return sid
+
     def _describe(self, alias):
+        """Lo que el planificador necesita para elegir tabla: de qué archivo y formato sale ("in the CSV",
+        "the workbook"), hoja o parte, y si hay otras copias del mismo dato."""
         t = self._t[alias]
         info, bits = t["info"], []
+        if t.get("path"):
+            src = f"from {_orig(t['path'])}" + (f" ({FMT[_ext(t['path'])]})" if _ext(t["path"]) in FMT else "")
+            if info.get("part"):
+                src += f", part '{info['part']}'"
+            bits.append(src)
         if info.get("sheet"):
             bits.append(f"sheet '{info['sheet']}' (header on row {info.get('header_row')}; _row = Excel row)")
         if info.get("combined_of"):
@@ -171,7 +202,7 @@ class AutoProfile(Profile):
         if info.get("sampled"):
             bits.append(f"large file, {info.get('rows')} rows")
         if info.get("alternatives"):
-            bits.append("same data also supplied as " + ", ".join(info["alternatives"]))
+            bits.append("same data also supplied as " + ", ".join(self._file_of(s) for s in info["alternatives"]))
         return "; ".join(bits)
 
     # -------------------------------------------------------------- interfaz de Profile
@@ -214,6 +245,10 @@ class AutoProfile(Profile):
         toks = Counter()
         for x in _tokens(alias):
             toks[x] += 3
+        for x in FMT_TOKENS.get(_ext(t.get("path")), ()):     # "in the CSV" / "the workbook"
+            toks[x] += 3
+        for x in _tokens(_stem(t["path"])) if t.get("path") else ():
+            toks[x] += 3
         for c in df.columns:
             for x in _tokens(c):
                 toks[x] += 2
@@ -233,6 +268,7 @@ class AutoProfile(Profile):
     def focus(self, question, k=3):
         """Elige las k tablas más pertinentes para la pregunta (nombres, columnas y valores que menciona)."""
         q = set(_tokens(question))
+        q |= {w[:-3] + "y" if w.endswith("ily") else w[:-2] for w in q if w.endswith("ly") and len(w) > 4}
         raw = set(re.findall(r"[A-Za-z0-9_./:-]{3,}", question or ""))
         scores = []
         for a, t in self._t.items():
