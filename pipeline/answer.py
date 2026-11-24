@@ -4,7 +4,7 @@ import json
 import os
 import time
 
-from pipeline import compose, executor, llm, planner, verdicts, writer
+from pipeline import cite, compose, executor, llm, planner, verdicts, writer
 from tools import guides
 
 
@@ -32,10 +32,13 @@ def answer(qid, question, profile, verbose=False, source_ids=None):
     results = executor.execute(plan, profile, question)
 
     idx, gids = guides.guides_for(source_ids or profile_source_ids(profile))
+    # los filtros que de verdad se aplicaron ("uuid_tlm3d is blank (null/empty after trim)") y sinónimos
+    # genéricos ayudan a que la nota de la guía hable de lo mismo que la respuesta
+    ftext = " ".join(r.get("filters_text", "") for r in results if r.get("filters_text") not in (None, "all records"))
     vlist = []
     try:
         for part in verdicts.yes_no_parts(question)[:3]:
-            notes = idx.search(f"{part} {part} {question}", gids, k=3) if gids else []
+            notes = idx.search(guides.expand(f"{part} {part} {question} {ftext}"), gids, k=3) if gids else []
             v = verdicts.ask(part, question, writer._facts(results), profile, budget, notes)
             if v:
                 vlist.append(v)
@@ -46,9 +49,12 @@ def answer(qid, question, profile, verbose=False, source_ids=None):
     except llm.BudgetExceeded:
         text = compose.compose(question, results, vlist, profile, llm.Budget(0, 0))
     text, wnotes = writer.verify(text, results, question, vlist)
-    evidence = writer.evidence_lines(results, profile, vlist)
+    cited = {v["evidence"].get("text") for v in vlist if v.get("evidence")}
+    conv = cite.convention(idx, results, gids, exclude=cited) if gids else None
+    evidence = writer.evidence_lines(results, profile, vlist, conv=conv)
     md = writer.format_answer(qid, text, evidence)
     info = {"verdicts": vlist, "writer_notes": wnotes, "plan": plan, "results": results, "budget": repr(budget),
+            "convention": conv and {k: conv[k] for k in ("source_id", "file", "para", "text", "score")},
             "calls": budget.calls, "tokens": budget.tokens, "text": text, "evidence": evidence,
             "tools": [r.get("op") for r in results], "seconds": round(time.time() - t0, 1)}
     if verbose:

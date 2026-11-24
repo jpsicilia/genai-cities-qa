@@ -229,8 +229,11 @@ def _null_breakdown(res, df, filters, key):
         return
     m = T.mask(df, filters)
     by = {p: int((m & pre.eq(p)).sum()) for p in vc.index}
-    res["by_prefix"] = by
-    res["display"] += " (by ID prefix: " + ", ".join(f"{p} {n}" for p, n in by.items()) + ")"
+    res["by_prefix"], res["prefix_key"] = by, key
+    split = ", ".join(f"{p} {n}" for p, n in by.items())
+    res["display"] += f" (by {key} prefix: {split})"
+    for e in res.get("evidence", [])[:1]:
+        e["claim"] += f"; by {key} prefix: {split}"
 
 
 GEO_TOOLS = {"areas", "validity", "nearest", "within_radius", "z_extent", "symbol_radius"}
@@ -368,16 +371,20 @@ def run_call(call, profile, question="", n_percent_calls=0):
     else:
         raise ValueError(tool)
     ftext = T.describe(filters)
+    label = None
     if nf:  # cita corta del filtro con nombre en vez de repetir sus 3 condiciones
+        label = profile.cfg.get("named_filters", {}).get(nf, {}).get("label")
         long = T.describe(profile.filters(nf))
-        short = f"{nf} screen (analysis conventions)"
+        short = f"{label or nf + ' screen'} (analysis conventions)"
         ftext = ftext.replace(long, short)
         for e in res.get("evidence", []):
             e["locator"] = e["locator"].replace(long, short)
     res.setdefault("field", field)
-    res.update(table=alias, filters_text=ftext, filters=filters, id_field=tcfg.get("key"))
+    res.update(table=alias, filters_text=ftext, filters=filters, id_field=tcfg.get("key"),
+               named_filter=nf, n_named=len(profile.filters(nf)) if nf else 0, named_label=label)
     if tool == "percent":
         res["den_text"] = T.describe(call.get("denominator")) if call.get("denominator") else "all rows"
+        res["den_filters"] = call.get("denominator") or []
     res["label"] = _label(call)
     res["notes"] = notes
     return res
@@ -394,7 +401,9 @@ def _allocation(profile, budget):
         flt = profile.filters(sc["named_filter"], {"field": sc["target_field"], "op": "eq_norm", "value": name})
         n = T.count(target, flt)["value"]
         items.append({"name": name, "cost": cost, "value": n})
-        ev.append({"source_id": tsid, "locator": f"{sc['named_filter']} screen AND {sc['target_field']} "
+        nf_label = profile.cfg.get("named_filters", {}).get(sc["named_filter"], {}).get("label") \
+            or f"{sc['named_filter']} screen"
+        ev.append({"source_id": tsid, "locator": f"{nf_label} AND {sc['target_field']} "
                    f"= {name!r} (case-insensitive)", "claim": f"{name}: {n} records"})
     res = T.best_combo(items, k=sc.get("k", 2), budget=budget, source_id=csid)
     res["budget"] = budget

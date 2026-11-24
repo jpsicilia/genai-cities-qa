@@ -82,8 +82,8 @@ def _is_heading(line):
     return s.startswith("#") or (0 < len(s) < 60 and not re.search(r"[.!?:;]$", s) and not URL_RE.search(s))
 
 
-def split_units(text, source_id, file_name):
-    """Párrafos numerados (sin contar títulos) y sus frases."""
+def split_units(text, source_id, file_name, kind="guide"):
+    """Párrafos numerados (sin contar títulos) y sus frases. kind: "guide" (organizadores) o "meta"."""
     units, para = [], 0
     for block in re.split(r"\n\s*\n", text.strip()):
         lines = [ln for ln in block.strip().splitlines() if ln.strip()]
@@ -96,7 +96,7 @@ def split_units(text, source_id, file_name):
         for sent in SENT_RE.split(body):
             sent = sent.strip()
             if len(sent) >= 12:
-                units.append({"source_id": source_id, "file": file_name, "para": para, "text": sent})
+                units.append({"source_id": source_id, "file": file_name, "para": para, "text": sent, "kind": kind})
     return units
 
 
@@ -115,6 +115,24 @@ def tokenize(s):
     return [_stem(t) for t in TOKEN_RE.findall(str(s).lower()) if t not in STOP and len(t) > 1]
 
 
+# sinónimos genéricos de consulta (inglés común en guías de datos): "empty" debe encontrar "nulls",
+# "remove" debe encontrar "drop"/"exclude". Solo se expande la consulta, nunca el texto de la guía.
+SYN = {
+    "empty": "blank null missing", "blank": "empty null missing", "missing": "null blank empty",
+    "null": "blank empty missing", "remove": "drop exclude", "drop": "remove exclude",
+    "exclude": "remove drop", "delete": "remove drop", "invalid": "defect repair", "unknown": "null missing",
+    "average": "mean", "mean": "average", "share": "percentage", "percent": "percentage",
+}
+
+
+def expand(query):
+    """Agrega una vez los sinónimos de cada término de la consulta que esté en SYN."""
+    extra = []
+    for t in dict.fromkeys(tokenize(query)):
+        extra += SYN.get(t, "").split()
+    return query + (" " + " ".join(extra) if extra else "")
+
+
 class GuideIndex:
     def __init__(self, units):
         self.units = units
@@ -128,11 +146,13 @@ class GuideIndex:
         df = Counter(t for d in self.docs for t in set(d))
         self.idf = {t: math.log(1 + (self.N - n + 0.5) / (n + 0.5)) for t, n in df.items()}
 
-    def search(self, query, allowed_sources=None, k=3, k1=1.5, b=0.75):
+    def search(self, query, allowed_sources=None, k=3, k1=1.5, b=0.75, kinds=None):
         q = tokenize(query)
         hits = []
         for i, u in enumerate(self.units):
             if allowed_sources is not None and u["source_id"] not in allowed_sources:
+                continue
+            if kinds is not None and u.get("kind", "guide") not in kinds:
                 continue
             tf, dl, s = self.tf[i], len(self.docs[i]), 0.0
             for t in q:
@@ -166,7 +186,7 @@ def default_index():
         except (OSError, ValueError):
             continue
         if text:
-            units += split_units(text, g, name)
+            units += split_units(text, g, name, kind="meta" if g in metas else "guide")
     return GuideIndex(units), link_guides(man)
 
 

@@ -63,7 +63,7 @@ def ask(part, question, facts, profile, budget, notes=None):
     if sel.isdigit() and 1 <= int(sel) <= len(notes):
         n = notes[int(sel) - 1]
         v["evidence"] = {"source_id": n["source_id"], "locator": f"{n['file']} ¶{n['para']}",
-                         "claim": _clip(n["text"], 150)}
+                         "claim": _clip(n["text"], 150), "text": n["text"]}
     return v
 
 

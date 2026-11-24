@@ -4,6 +4,7 @@ import re
 
 NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 SAFE_NUMS = {"0", "1", "2", "3"}
+PREFIX_DISP_RE = re.compile(r"\s*\(by [^()]*prefix:[^()]*\)")
 
 
 def canon(n):
@@ -28,7 +29,11 @@ def required_tokens(results):
         if op == "prefix_counts":
             toks |= {canon(v) for k, v in r["value"].items() if k != "other"}
             continue
-        toks |= nums(r["display"])
+        disp = r["display"]
+        if r.get("by_prefix"):  # "(by baumnummer prefix: BK_ 200, TLM3D_ 0)": el texto puede decir "none" por el 0
+            disp = PREFIX_DISP_RE.sub("", disp)
+            toks |= {canon(n) for n in r["by_prefix"].values() if n}
+        toks |= nums(disp)
         if op == "best_combo" and isinstance(r.get("value"), dict):
             toks |= {n.lower() for n in r["value"]["names"]}
     return toks

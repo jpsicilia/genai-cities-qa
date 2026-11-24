@@ -103,8 +103,7 @@ def percent(df, num_filters, den_filters=None, source_id=""):
     n, d = int(num.sum()), int(den.sum())
     val = 100 * n / d if d else None
     return {"op": "percent", "value": val, "display": f"{fmt2(val)}%", "numerator": n, "denominator": d,
-            "evidence": [_ev(source_id, (den_filters or []) + (num_filters or []),
-                             f"{n} / {d} = {fmt2(val)}%",
+            "evidence": [_ev(source_id, num_filters, f"{n} / {d} = {fmt2(val)}%",
                              f"denominator: {describe(den_filters)} ({d} records)")]}
 
 

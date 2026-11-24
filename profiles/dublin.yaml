@@ -24,6 +24,7 @@ tables:
 
 named_filters:
   poor_tall:            # Analysis.md: Poor-and-tall screening rule
+    label: Poor-and-tall screening rule
     table: dcc
     mention: "poor[- ]and[- ]tall|\\btall\\b|screen"     # solo se aplica si la pregunta lo nombra
     filters:
@@ -31,6 +32,7 @@ named_filters:
       - {field: Height, op: in, value: ["15 to 20m", "20 to 25m", "Over 25m"]}
       - {field: Species, op: ne, value: "Suitable Planting Location"}
   dlr_screen_keep:      # Analysis.md: explicit DLR exclusion screen (what remains)
+    label: DLR exclusion screen
     table: dlr
     mention: "exclusion|screen|remove exactly|\\bexclud"
     filters:

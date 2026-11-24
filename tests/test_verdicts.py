@@ -2,16 +2,16 @@ from pipeline import verdicts, writer
 
 
 def test_detect_yes_no_parts():
-    q = ("How many DCC rows are labelled Suitable Planting Location? Do any of those also have a Fair condition, "
-         "and would that make them confirmed existing trees?")
+    q = ("How many rows are labelled Planting pit? Do any of those also have a Good status, "
+         "and would that make them verified living plants?")
     parts = verdicts.yes_no_parts(q)
     assert len(parts) == 1 and parts[0].startswith("Do any")
-    q2 = "What is the stored maximum and which records attain it? Would we be justified in changing it?"
-    assert verdicts.yes_no_parts(q2) == ["Would we be justified in changing it?"]
-    q3 = "Give the count and explain why searching only GRIFFITH AVENUE gives a smaller number."
+    q2 = "What is the largest stored width and which rows reach it? Would we be justified in editing it?"
+    assert verdicts.yes_no_parts(q2) == ["Would we be justified in editing it?"]
+    q3 = "Give the total and explain why a search for ELM ROAD alone returns fewer rows."
     assert verdicts.yes_no_parts(q3) == []
-    q4 = "How many remain, and does this substitute for a boundary overlay?"
-    assert verdicts.yes_no_parts(q4) == ["Does this substitute for a boundary overlay?"]
+    q4 = "How many are left, and does this replace a proper spatial join?"
+    assert verdicts.yes_no_parts(q4) == ["Does this replace a proper spatial join?"]
 
 
 def test_verdict_appended_when_missing():
@@ -40,7 +40,8 @@ def test_verdict_cites_the_chosen_guide_note(monkeypatch):
     v = verdicts.ask("Could the portal's update date stand in for that?", "q", "facts", P(), llm.Budget(), notes)
     assert v["verdict"] == "No"
     assert v["evidence"] == {"source_id": "SRC_g", "locator": "SourceGuide.md ¶3",
-                             "claim": "Metadata resource/update dates are not per-tree observation dates."}
+                             "claim": "Metadata resource/update dates are not per-tree observation dates.",
+                             "text": "Metadata resource/update dates are not per-tree observation dates."}
 
 
 def test_evidence_lines_put_verdict_note_after_numbers():

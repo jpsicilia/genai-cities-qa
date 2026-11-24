@@ -44,9 +44,10 @@ def _clip(text, n):
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
 
-def evidence_lines(results, profile, verdict_list=None, max_lines=4):
+def evidence_lines(results, profile, verdict_list=None, max_lines=4, conv=None):
     """Evidencia compacta: primero los números (2), luego las notas de las guías que respaldan los
-    veredictos, luego el resto. Si ningún veredicto cita una nota, se cita la guía de análisis."""
+    veredictos, luego el resto y al final la frase de convención (cite.convention) si cabe. Sin frase de
+    convención ni nota de veredicto, queda la línea genérica de la guía de análisis."""
     def line(e):
         return f"- {e['source_id']} | {_clip(e['locator'], 110)} | {_clip(e['claim'], 110)}"
 
@@ -64,7 +65,11 @@ def evidence_lines(results, profile, verdict_list=None, max_lines=4):
             verd_l.append(line(e))
     out = tool_l[:2] + verd_l + tool_l[2:]
     a = profile.cfg.get("analysis_source")
-    if a and not verd_l and len(out) < max_lines:
+    if conv:
+        ln = line({"source_id": conv["source_id"], "locator": f"{conv['file']} ¶{conv['para']}", "claim": conv["text"]})
+        if ln not in seen and len(out) < max_lines:
+            out.append(ln)
+    elif a and not verd_l and len(out) < max_lines:
         out.append(f"- {a} | analysis conventions file | counting, null/blank and rounding conventions applied")
     return out[:max_lines]
 

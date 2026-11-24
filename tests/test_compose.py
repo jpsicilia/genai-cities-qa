@@ -8,23 +8,60 @@ def R(**kw):
     return base
 
 
+POOR = {"field": "Condition", "op": "eq", "value": "Poor"}
+NOTNULL = {"field": "Condition", "op": "notnull"}
+P0 = type("P", (), {"cfg": {}})()
+
+
 def test_count_and_percents_share_the_filter_once():
     f = "Condition = 'Poor'"
-    res = [R(op="count", value=1122, total_rows=15962, filters_text=f, display="1122"),
-           R(op="percent", numerator=1122, denominator=15962, filters_text=f, den_text="all rows", display="7.03%"),
-           R(op="percent", numerator=1122, denominator=15015, filters_text=f, den_text="Condition is not null",
-             display="7.47%")]
-    txt = compose.compose("q", res, [], type("P", (), {"cfg": {}})(), llm.Budget(0, 0))
-    assert txt.count(f) == 1 and "7.03% of 15962" in txt and "7.47% of 15015" in txt and "Condition is not null" in txt
+    res = [R(op="count", value=120, total_rows=1600, filters_text=f, filters=[POOR], display="120"),
+           R(op="percent", numerator=120, denominator=1600, filters_text=f, filters=[POOR], den_text="all rows",
+             den_filters=[], display="7.50%"),
+           R(op="percent", numerator=120, denominator=1500, filters_text=f, filters=[POOR],
+             den_text="Condition is not null", den_filters=[NOTNULL], display="8.00%")]
+    txt = compose.compose("q", res, [], P0, llm.Budget(0, 0))
+    assert txt.startswith("120 of the 1600 DCC records have Condition = 'Poor'.")
+    assert "That is 7.50% of all 1600 DCC rows (denominator: all rows)." in txt
+    assert "Using only the 1500 DCC records with a recorded Condition (not null) as the denominator, it is 8.00%." in txt
+    assert txt.count(f) == 1
+
+
+def test_percent_alone_names_its_denominator_and_drops_repeated_condition():
+    res = [R(op="percent", numerator=120, denominator=1500, filters_text="Condition is not null AND Condition = 'Poor'",
+             filters=[NOTNULL, POOR], den_text="Condition is not null", den_filters=[NOTNULL], display="8.00%")]
+    txt = compose.compose("q", res, [], P0, llm.Budget(0, 0))
+    assert txt == ("120 of the 1500 DCC records with a recorded Condition (not null) have Condition = 'Poor', "
+                   "which is 8.00%.")
+
+
+def test_blank_count_with_prefix_split_reads_as_a_sentence():
+    res = [R(op="count", table="inventory", value=700, total_rows=1500, display="700",
+             filters=[{"field": "uuid_tlm3d", "op": "blank"}], filters_text="uuid_tlm3d is blank (null/empty after trim)",
+             by_prefix={"BK_": 700, "TLM3D_": 0}, prefix_key="baumnummer")]
+    txt = compose.compose("q", res, [], P0, llm.Budget(0, 0))
+    assert txt == ("700 of the 1500 inventory records have a blank uuid_tlm3d (null or empty after trimming). "
+                   "By baumnummer prefix, all 700 are BK_ records and none are TLM3D_ records.")
+
+
+def test_named_filter_is_named_once_by_its_label():
+    tall = [{"field": "Condition", "op": "eq", "value": "Poor"}, {"field": "Height", "op": "in", "value": ["Over 25m"]}]
+    res = [R(op="count", value=37, total_rows=1600, display="37", filters=tall + [{"field": "Street", "op": "nonblank"}],
+             filters_text="x", named_filter="poor_tall", n_named=2, named_label="Poor-and-tall screening rule")]
+    txt = compose.compose("q", res, [], P0, llm.Budget(0, 0))
+    assert txt == ("37 of the 1600 DCC records pass the Poor-and-tall screening rule and have a non-blank Street "
+                   "(after trimming).")
 
 
 def test_normalisation_explanation_from_spelling_split():
-    res = [R(op="group_count", field="Street", value=[("griffith avenue", 1005)], display="griffith avenue: 1005",
-             by_spelling={"GRIFFITH AVENUE": 1003, "Griffith Avenue": 2}),
-           R(op="count", value=1003, total_rows=15962, filters_text="Street = 'GRIFFITH AVENUE'",
-             filters=[{"field": "Street", "op": "eq", "value": "GRIFFITH AVENUE"}], display="1003")]
+    res = [R(op="group_count", field="Street", value=[("elm road", 52)], display="elm road: 52",
+             filters=[], by_spelling={"ELM ROAD": 50, "Elm Road": 2}),
+           R(op="count", value=50, total_rows=1600, filters_text="Street = 'ELM ROAD'",
+             filters=[{"field": "Street", "op": "eq", "value": "ELM ROAD"}], display="50")]
     txt = compose.compose("Explain why it is smaller", res, [], type("P", (), {"cfg": {}})(), llm.Budget(0, 0))
-    assert "misses the 2 record(s) spelled 'Griffith Avenue'" in txt and "1005" in txt
+    assert txt.startswith("Ignoring letter case and surrounding spaces, the most frequent Street among DCC records is "
+                          "'ELM ROAD' with 52 records ('ELM ROAD' 50, 'Elm Road' 2).")
+    assert "misses the 2 records spelled 'Elm Road'; ignoring letter case and surrounding spaces merges them." in txt
 
 
 def test_why_without_deterministic_explanation_asks_the_model(monkeypatch):
@@ -49,7 +86,7 @@ def test_record_sentence_skips_key_and_marks_blank():
 
 
 def test_verdicts_are_appended():
-    res = [R(op="count", value=61, total_rows=15962, filters_text="Species = 'Suitable Planting Location'", display="61")]
+    res = [R(op="count", value=9, total_rows=1600, filters_text="Species = 'Planting pit'", display="9")]
     v = [{"verdict": "No", "reason": "The label marks a planting location, not a tree"}]
     txt = compose.compose("q?", res, v, type("P", (), {"cfg": {}})(), llm.Budget(0, 0))
     assert txt.endswith("No: The label marks a planting location, not a tree.")
