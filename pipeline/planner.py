@@ -38,6 +38,10 @@ TOOLS = {
 }
 
 
+# Los perfiles escritos a mano ven el prompt de la v8 tal cual (el holdout de Dublín perdió 2 casos cuando cambió):
+# la descripción vieja de 'extreme' y el esquema sin 'which'. El ejecutor deduce min/max de la pregunta.
+CLASSIC_TOOLS = {"extreme": "max of numeric 'field' and ALL records reaching it"}
+
 AUTO_CTX_CHARS = 14000      # tope de descripción de tablas en perfiles automáticos (num_ctx 8192)
 
 
@@ -86,7 +90,6 @@ def build_schema(profile, columns):
                 "named_filter": {"type": "string", "enum": list(profile.cfg.get("named_filters", {})) + ["none"]},
                 "denominator": {"type": "array", "items": filt},
                 "positive_only": {"type": "boolean"},
-                "which": {"type": "string", "enum": ["max", "min"]},
                 "mapping": {"type": "string", "enum": list(profile.cfg.get("mappings", {})) + ["none"]},
                 "key": {}, "anchor": {}, "ids": {"type": "array"},
                 "radius": {"type": "number"}, "budget": {"type": "number"},
@@ -95,6 +98,8 @@ def build_schema(profile, columns):
                 "prefixes": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["tool", "table"]}
+    if profile.cfg.get("auto"):
+        call["properties"]["which"] = {"type": "string", "enum": ["max", "min"]}
     return {"type": "object", "properties": {"calls": {"type": "array", "items": call, "maxItems": 5}},
             "required": ["calls"]}
 
@@ -155,7 +160,7 @@ def build_messages(question, profile, tables):
     nf = "\n".join(f"  - {k}: {v.get('table')} -> " + "; ".join(
         f"{f['field']} {f['op']} {f.get('value', '')}" for f in v["filters"]) for k, v in
         profile.cfg.get("named_filters", {}).items()) or "  (none)"
-    tools = "\n".join(f"  - {k}: {TOOLS[k]}" for k in tool_names(profile))
+    tools = "\n".join(f"  - {k}: {TOOLS[k] if auto else CLASSIC_TOOLS.get(k, TOOLS[k])}" for k in tool_names(profile))
     system = (
         "You plan data lookups. Never compute numbers yourself: choose tools and exact filters.\n"
         "Use exact category values from the column lists. Use op 'null' for 'recorded as null/missing' and "

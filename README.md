@@ -65,6 +65,11 @@ that say "in the CSV" or "in the workbook" reach the right table. The
 planner also receives the guide sentences most related to the question. New tools: `value` (a field in the
 row(s) chosen by filters, with its cell reference), `sum`, `extreme` with `which=min`. Differences, percentage
 changes and ratios between planned numbers are computed by Python (`pipeline/derived.py`), never by the model.
+Deterministic plan repairs for automatic profiles only (`executor.auto_repair`): "which … has the most records"
+becomes `group_count` on the column the question names (also abbreviated: hour → `hr`); calls with invented
+filter values (`'max_value'` on a numeric column) are dropped; a percent whose denominator excludes its numerator
+is dropped; a second label named in the question (2021 *and* 2023) gets its own call; "total" over several rows is
+a sum; the mean of a single row is read as that cell. Hand-written profiles keep the v8 prompt and schema exactly.
 `make_submission.py` runs the questions family by family (Test.csv is shuffled), so each automatic profile is
 built once; the output file keeps the SampleSubmission order.
 

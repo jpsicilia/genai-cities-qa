@@ -171,3 +171,55 @@ def test_family_without_readable_tables_fails_fast(fams, monkeypatch):
     with pytest.raises(ValueError):
         answer.answer("Q", "How many?", P, source_ids=["SRC_b3"])
     assert not calls                                # no se llamó al modelo
+
+
+# ------------------------------------------------------------------ reparaciones del plan (perfil automático)
+def _ops(info):
+    return [(r["op"], r["display"]) for r in info["results"]]
+
+
+def test_most_records_question_becomes_group_count_on_abbreviated_column(fams, monkeypatch):
+    # el modelo pidió 'value' de cnt; "hour" nombra la columna 'hr'
+    _, info = run(fams["bike"], "In the hourly file, which hour label has the most records with weathersit 1?",
+                  [{"tool": "value", "table": "hour", "field": "cnt", "filters": [F("weathersit", "eq", 1)]}],
+                  monkeypatch)
+    assert info["results"][0]["op"] == "group_count" and info["results"][0]["field"] == "hr"
+
+
+def test_invented_filter_values_are_dropped_and_most_uses_the_named_field(fams, monkeypatch):
+    _, info = run(fams["tsanas"], "In the workbook, which X5 value occurs in the most rows?",
+                  [{"tool": "distinct", "table": "enb_data", "field": "X5"},
+                   {"tool": "value", "table": "enb_data", "field": "X5", "filters": [F("X5", "eq_norm", "most_common")]}],
+                  monkeypatch)
+    assert _ops(info) == [("group_count", "3.5: 3")]
+    _, info = run(fams["tsanas"], "What is the highest Y1 in the workbook?",
+                  [{"tool": "extreme", "table": "enb_data", "field": "Y1"},
+                   {"tool": "count", "table": "enb_data", "filters": [F("Y1", "eq", "max_value")]}], monkeypatch)
+    assert [op for op, _ in _ops(info)] == ["max"]
+
+
+def test_total_over_many_rows_is_a_sum_and_contradictory_percent_goes(fams, monkeypatch):
+    md, info = run(fams["bike"], "What was the total cnt in month 1 of yr 0 and of yr 1? Give the percentage change from yr 0.",
+                   [{"tool": "value", "table": "day", "field": "cnt", "filters": [F("mnth", "eq", 1), F("yr", "eq", 0)]},
+                    {"tool": "value", "table": "day", "field": "cnt", "filters": [F("mnth", "eq", 1), F("yr", "eq", 1)]},
+                    {"tool": "percent", "table": "day", "filters": [F("yr", "eq", 0)], "denominator": [F("yr", "eq", 1)]}],
+                   monkeypatch)
+    assert [op for op, _ in _ops(info)][:2] == ["sum", "sum"] and "percent" not in [op for op, _ in _ops(info)]
+    assert any(r["op"] == "derived" for r in info["results"])
+    assert "1100" in md and "2860" in md                       # 110+220+330+440 y 550+...+880
+
+
+def test_second_label_named_in_question_gets_its_own_call(fams, monkeypatch):
+    _, info = run(fams["toulouse"], "What were the annual plantings in 2020 and in 2022? Give the percentage change from 2020.",
+                  [{"tool": "value", "table": "records", "field": "plantes_annuel", "filters": [F("annee", "eq", 2020)]}],
+                  monkeypatch)
+    vals = [r["display"] for r in info["results"] if r["op"] == "value"]
+    assert vals == ["1200", "2000"]                           # en el orden de la pregunta
+
+
+def test_mean_of_a_single_row_reads_the_cell(fams, monkeypatch):
+    _, info = run(fams["durban"], "What average FBE claims figure is reported for 10/11?",
+                  [{"tool": "mean", "table": "fbe_claims", "field": "Average FBE claims per year",
+                    "filters": [F("Year", "eq", "10/11")]}], monkeypatch)
+    r = info["results"][0]
+    assert r["op"] == "value" and r["display"] == "54321.123456" and r.get("cells") == ["B4"]

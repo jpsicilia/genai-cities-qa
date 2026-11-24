@@ -16,6 +16,7 @@ from tools import tabular as T
 CAT_OPS = ("eq", "ne", "in", "not_in")
 MIN_RE = re.compile(r"\b(lowest|smallest|minimum|least|earliest|fewest|shortest|min)\b", re.I)
 MAX_RE = re.compile(r"\b(highest|largest|maximum|most|latest|biggest|greatest|longest|max)\b", re.I)
+TOTAL_RE = re.compile(r"\b(total|sum|summed|altogether)\b", re.I)
 
 
 def _repair_value(series, value, notes):
@@ -293,6 +294,7 @@ def run_call(call, profile, question="", n_percent_calls=0):
     if nf:
         filters = profile.filters(nf) + filters
     call = {**call, "table": alias, "filters": filters, "named_filter": nf}
+    auto = bool(profile.cfg.get("auto"))
 
     if tool == "group_count" and field is None:
         tool = "count"
@@ -344,6 +346,12 @@ def run_call(call, profile, question="", n_percent_calls=0):
         res = T.mean(df, field, filters, positive_only=bool(call.get("positive_only")), mapping=mp, source_id=sid)
         res["field"] = field
         res["kind"] = "band lower-edge" if mp else ("positive-only" if call.get("positive_only") else "raw")
+        if auto and not mp and not call.get("positive_only") and res.get("n_used") == 1 \
+                and int(T.mask(df, filters).sum()) == 1:
+            # la "media" de una sola fila es su valor: se lee la celda, con precisión completa y su referencia
+            tool = "value"
+            res = T.value(df, field, filters, info=profile.info(alias), source_id=sid)
+            notes.append("mean over a single row -> value of that row")
     elif tool == "extreme":
         which = call.get("which") if call.get("which") in ("max", "min") else (
             "min" if MIN_RE.search(question or "") and not MAX_RE.search(question or "") else "max")
@@ -354,7 +362,16 @@ def run_call(call, profile, question="", n_percent_calls=0):
         res = T.sum_(df, field, filters, source_id=sid)
     elif tool == "value":
         info = profile.info(alias) if hasattr(profile, "info") else {}
-        res = T.value(df, field or tcfg.get("key"), filters, info=info, source_id=sid)
+        f_ = field or tcfg.get("key")
+        n_rows = int(T.mask(df, filters).sum())
+        if auto and n_rows > 1 and TOTAL_RE.search(question or "") and f_ in df.columns \
+                and pd.api.types.is_numeric_dtype(df[f_]):
+            # "the total X" sobre varias filas es una suma, no la lista de valores
+            tool = "sum"
+            res = T.sum_(df, f_, filters, source_id=sid)
+            notes.append(f"value over {n_rows} rows with 'total' in the question -> sum")
+        else:
+            res = T.value(df, f_, filters, info=info, source_id=sid)
     elif tool == "distinct":
         res = T.distinct(df, field or tcfg.get("key"), filters, source_id=sid)
     elif tool == "lookup":
@@ -401,7 +418,7 @@ def run_call(call, profile, question="", n_percent_calls=0):
     if tool == "percent":
         res["den_text"] = T.describe(call.get("denominator")) if call.get("denominator") else "all rows"
         res["den_filters"] = call.get("denominator") or []
-    res["label"] = _label(call)
+    res["label"] = _label({**call, "tool": tool})
     res["notes"] = notes
     extra = profile.combined_sources(alias) if hasattr(profile, "combined_sources") else []
     for sid2, layer, n in extra:            # tabla combinada: cada capa cita su propia fuente
@@ -637,11 +654,119 @@ def repair_plan(calls, question, profile, notes):
     return out
 
 
+# ---------------------------------------------------------------- reparaciones del perfil automático
+# Solo para perfiles automáticos: los perfiles escritos a mano (Dublín, Zúrich) quedan como estaban.
+AUTO_MOST_RE = re.compile(r"\b(most common|most frequent|most often|(has|have|occurs?|appears?)( in)? the most "
+                          r"(records|rows|entries|times))\b")
+LABEL_RE = re.compile(r"\b\d{4}/\d{2,4}\b|\b\d{2}/\d{2}\b|\b(?:19|20)\d{2}\b")   # 2021, 1990/1991, 12/13
+
+
+def _devowel(w):
+    return re.sub(r"[aeiou]", "", w)
+
+
+def _cols_named(df, q, exclude=()):
+    """Columnas que la pregunta nombra: tal cual ('x5') o abreviadas sin vocales ('hour' -> 'hr', 'month' -> 'mnth')."""
+    words = set(re.findall(r"[a-z0-9]+", q))
+    short = {_devowel(w) for w in words if len(w) >= 4}
+    return [c for c in df.columns if c not in exclude and not str(c).startswith("_")
+            and (str(c).lower() in words or (len(str(c)) >= 2 and str(c).lower() in short))]
+
+
+def _placeholder(f, df, q):
+    """Valor inventado por el modelo ('max_value', 'most_common') en una columna numérica: texto que no es número,
+    ni fecha u hora, ni aparece en la pregunta. Con ese filtro la llamada solo puede dar basura."""
+    v, col = f.get("value"), f.get("field")
+    if not isinstance(v, str) or col not in df.columns or not pd.api.types.is_numeric_dtype(df[col]):
+        return False
+    x = v.strip()
+    if not x or x.lower() in q or re.fullmatch(r"\d{4}-\d{2}-\d{2}.*|\d{1,2}:\d{2}.*", x):
+        return False
+    try:
+        float(x.replace(",", "."))
+        return False
+    except ValueError:
+        return True
+
+
+def _contradictory_percent(c):
+    """'yr = 0' dentro de 'yr = 1': numerador y denominador piden valores distintos del mismo campo -> siempre 0%."""
+    num = {f.get("field"): f.get("value") for f in c.get("filters") or [] if f.get("op") == "eq"}
+    den = {f.get("field"): f.get("value") for f in c.get("denominator") or [] if f.get("op") == "eq"}
+    return any(k in num and str(num[k]) != str(den[k]) for k in den)
+
+
+def _siblings(calls, question, profile, notes):
+    """'in 2021 and in 2023': si el plan lee 2021 y la pregunta nombra otro rótulo de la misma forma que existe en esa
+    columna, se agrega la misma llamada para ese rótulo, en el orden de la pregunta."""
+    labels = [m.group(0) for m in LABEL_RE.finditer(question or "")]
+    out = list(calls)
+    for c in calls:
+        if c.get("tool") not in ("value", "sum", "count", "mean") or c.get("table") not in profile.cfg["tables"]:
+            continue
+        eq = [f for f in c.get("filters") or [] if f.get("op") == "eq" and str(f.get("value")) in labels]
+        if len(eq) != 1:
+            continue
+        f = eq[0]
+        v = str(f["value"])
+        df = profile.table(c["table"])[0]
+        if f.get("field") not in df.columns:
+            continue
+        have = set(df[f["field"]].dropna().astype(str).str.replace(r"\.0$", "", regex=True))
+        done = {str(g.get("value")) for d in out if d.get("tool") == c["tool"] and d.get("table") == c["table"]
+                and d.get("field") == c.get("field") for g in d.get("filters") or [] if g.get("field") == f["field"]}
+        for t in labels:
+            if t in done or re.sub(r"\d", "9", t) != re.sub(r"\d", "9", v) or t not in have:
+                continue
+            val = int(t) if isinstance(f["value"], int) else float(t) if isinstance(f["value"], float) else t
+            new = {**c, "filters": [{**g, "value": val} if g is f else g for g in c["filters"]]}
+            i = out.index(c)
+            out.insert(i + 1 if labels.index(t) > labels.index(v) else i, new)
+            done.add(t)
+            notes.append(f"question also names {f['field']} {t!r} -> same {c['tool']} for it")
+    return out
+
+
+def auto_repair(calls, question, profile, notes):
+    q = (question or "").lower()
+    most = bool(AUTO_MOST_RE.search(q)) and not any(c.get("tool") == "group_count" for c in calls)
+    out = []
+    for c in calls:
+        alias = c.get("table")
+        if alias not in profile.cfg["tables"]:
+            out.append(c)
+            continue
+        df = profile.table(alias)[0]
+        bad = [f for f in c.get("filters") or [] if _placeholder(f, df, q)]
+        if most and c.get("tool") in ("count", "distinct", "value"):
+            keep = [f for f in c.get("filters") or [] if f not in bad]
+            used = {f.get("field") for f in keep}
+            own = c.get("field") if c.get("field") not in (None, "none") else None
+            named = _cols_named(df, q, used)
+            cands = ([own] if own in named else []) + [x for x in named if x != own]
+            if cands:
+                out.append({"tool": "group_count", "table": alias, "field": cands[0], "filters": keep})
+                notes.append(f"'which ... the most records' -> group_count on {cands[0]!r}")
+                most = False
+                continue
+        if bad:
+            notes.append(f"dropped call with invented filter values: {[f.get('value') for f in bad]}")
+            continue
+        if c.get("tool") == "percent" and _contradictory_percent(c):
+            notes.append("dropped percent whose denominator excludes its numerator")
+            continue
+        out.append(c)
+    return _siblings(out, question, profile, notes)
+
+
 def execute(plan, profile, question=""):
     results = []
     plan_notes = []
     calls = _dedupe_and_scope(plan.get("calls", []), question, plan_notes, tuple(profile.plan_tables()))
-    calls = repair_plan(calls, question, profile, plan_notes)[:5]
+    calls = repair_plan(calls, question, profile, plan_notes)
+    if profile.cfg.get("auto"):
+        calls = auto_repair(calls, question, profile, plan_notes)
+    calls = calls[:5]
     n_pct = sum(c.get("tool") == "percent" for c in calls)
     for call in calls:
         try:
