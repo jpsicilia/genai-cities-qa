@@ -7,6 +7,7 @@
 - Caché en runs/cache.jsonl: se puede cortar con Ctrl+C y reanudar sin repetir preguntas.
 - Registro por pregunta (llamadas al modelo, tokens generados, herramientas, segundos) en runs/calls.jsonl,
   como pidió el staff ("log which calls each question uses").
+- Limpieza: quita frases que no responden nada ("No … row … was found.", listas "(+N more)").
 - Pasada de tamaño: comprime las respuestas más largas hasta quedar bajo --max-bytes (240 KiB).
 - Valida el formato al final.
 
@@ -165,7 +166,7 @@ def main():
     for q in order:
         c = cache.get(q)
         if c and c.get("answered"):
-            entries.append({"id": q, "text": c["text"], "evidence": list(c["evidence"]), "answered": True})
+            entries.append(SUB.tidy({"id": q, "text": c["text"], "evidence": list(c["evidence"]), "answered": True}))
         else:
             entries.append(SUB.fallback(q, sids[q]))
     total, steps = SUB.shrink(entries, args.max_bytes)

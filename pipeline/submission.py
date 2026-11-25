@@ -40,6 +40,38 @@ def assemble(entries):
     return HEADER + "\n".join(render(e) for e in entries)
 
 
+# Frases que no responden nada y solo ocupan bytes: un filtro que no encontró fila ("No X row with … was found.")
+# y listas de valores de muchas filas ("…; …; (+90 more)"), que salen cuando el modelo usa 'value' para algo que
+# no es una fila concreta. Se quitan al armar el archivo, junto con la evidencia que solo las respaldaba.
+SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
+NOT_FOUND_RE = re.compile(r"^No [^:]+? row\b[^:]* was found\.$")
+RUNAWAY_RE = re.compile(r"\(\+\d+ more\)")
+LIST_FIELD_RE = re.compile(r" have (.+?) = ")
+EMPTY_TEXT = "The supplied tables did not give a direct answer to this question."
+
+
+def tidy(e):
+    """Copia de la respuesta sin frases vacías de contenido. Las respuestas de respaldo no se tocan."""
+    if not e.get("answered"):
+        return e
+    sents = SENT_SPLIT.split(_clean_text(e["text"]))
+    drop = [s for s in sents if NOT_FOUND_RE.match(s) or RUNAWAY_RE.search(s)]
+    if not drop:
+        return e
+    keep = [s for s in sents if s not in drop] or [EMPTY_TEXT]
+    fields = {m.group(1) for s in drop for m in [LIST_FIELD_RE.search(s)] if m and RUNAWAY_RE.search(s)}
+
+    def useless(ln):
+        parts = ln[2:].split(" | ", 2)
+        if len(parts) < 3:
+            return False
+        _, loc, claim = parts
+        return claim.strip() == "no matching row" or any(
+            loc.endswith(f"field {f}") and claim.startswith(f"{f} = ") for f in fields)
+    ev = [ln for ln in e.get("evidence") or [] if not useless(ln)]
+    return {**e, "text": " ".join(keep), "evidence": ev or list(e.get("evidence") or [])[:1]}
+
+
 def _clip_line(line, n=80):
     parts = line[2:].split(" | ", 2)
     if len(parts) < 3:
@@ -55,9 +87,7 @@ def _shrink_one(e):
     if len(ev) > 2:
         ev.pop()
         return True
-    long = [i for i, ln in enumerate(ev) if len(ln) > 130]
-    if long:
-        ev[long[0]] = _clip_line(ev[long[0]])
+    if _clip_any(ev, 130, 80):
         return True
     sents = re.split(r"(?<=[.!?])\s+", e["text"].strip())
     drop = [i for i, s in enumerate(sents) if i > 0 and not NUM_OR_VERDICT.search(s)]
@@ -65,6 +95,25 @@ def _shrink_one(e):
         del sents[drop[-1]]
         e["text"] = " ".join(sents)
         return True
+    # último recurso, con muchas respuestas: recortes más cortos del lugar y de lo que se afirma
+    # (la fuente y el comienzo del localizador, lo que permite verificar, siempre quedan)
+    for limit, n in CLIP_LEVELS:
+        if _clip_any(ev, limit, n):
+            return True
+    return False
+
+
+CLIP_LEVELS = ((110, 60), (90, 45))
+
+
+def _clip_any(ev, limit, n):
+    """Recorta la primera línea más larga que 'limit' a n caracteres por parte, solo si así se acorta."""
+    for i, ln in enumerate(ev):
+        if len(ln) > limit:
+            c = _clip_line(ln, n)
+            if len(c) < len(ln):
+                ev[i] = c
+                return True
     return False
 
 
@@ -83,6 +132,9 @@ def shrink(entries, max_bytes=TARGET):
             frozen.add(i)
             continue
         new = len(render(entries[i]).encode())
+        if new >= sizes[i]:              # un paso que no achica no cuenta: nunca un bucle sin fin
+            frozen.add(i)
+            continue
         total += new - sizes[i]
         sizes[i] = new
         steps += 1

@@ -213,7 +213,7 @@ def sum_(df, field, filters=None, source_id=""):
                              + (f" ({n_null} null)" if n_null else ""))]}
 
 
-def value(df, field, filters=None, info=None, source_id="", max_rows=10):
+def value(df, field, filters=None, info=None, source_id="", max_rows=5):
     """Valor de 'field' en la(s) fila(s) que eligen los filtros. En hojas de cálculo cita la celda exacta."""
     info = info or {}
     sub = df.loc[mask(df, filters)]
@@ -231,7 +231,8 @@ def value(df, field, filters=None, info=None, source_id="", max_rows=10):
             return "null"
         if isinstance(x, float):
             return f"{x:.15g}"          # valor guardado con toda su precisión (sin notación científica corta)
-        return str(x)
+        x = str(x)
+        return x if len(x) <= 60 else x[:59] + "…"      # geometrías y textos largos: no se copian enteros
 
     if n == 1:
         v = vals[0]

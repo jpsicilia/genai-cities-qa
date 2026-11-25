@@ -48,6 +48,7 @@ python scripts/validate_submission.py runs/submission.md
 ```
 
 `make_submission.py` caches finished questions in `runs/cache.jsonl` and can be resumed after an interruption.
+When the file is assembled, sentences that answer nothing are removed ("No … row … was found.", value lists ending in "(+N more)") together with the evidence that only supported them; then the longest answers are trimmed step by step (fewer evidence lines, shorter locators and claims, sentences without numbers or verdicts) until the file fits in 240 KiB. Numbers and Yes/No verdicts are never removed by trimming.
 
 ## Automatic profile (families without a hand-written profile)
 
