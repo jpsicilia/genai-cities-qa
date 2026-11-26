@@ -39,9 +39,11 @@ Place the challenge files in `data/` (`Test.csv`, `SampleSubmission.md`, `Source
 
 ## Model
 
-One generative model: **Qwen3-1.7B** (`qwen3:1.7b` in Ollama), 1.7B parameters in total (1.4B non-embedding,
-per the Qwen model card), Apache-2.0 licence. Settings: `think=False`, temperature 0, `num_ctx` 8192. No
-fine-tuning. BM25 retrieval over the organiser guides is non-generative and written in plain Python.
+One generative model: **Qwen3-1.7B** as the Ollama tag `qwen3:1.7b` (architecture qwen3, quantization Q4_K_M,
+Apache-2.0 licence). Parameter count: `ollama show` reports **2.0B** in total; the Qwen model card lists 1.7B
+(1.4B non-embedding). Both are under the challenge's 3B cap; the challenge asks for the total, so 2.0B is the
+figure to quote. Settings set by the code (they override Ollama's defaults of temperature 0.6, top_p 0.95):
+`think=False`, temperature 0, `num_ctx` 8192. No fine-tuning. BM25 retrieval over the organiser guides is non-generative and written in plain Python.
 
 ## Results (25 Nov 2026)
 
