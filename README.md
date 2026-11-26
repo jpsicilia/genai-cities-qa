@@ -37,8 +37,34 @@ ollama pull qwen3:1.7b
 
 Place the challenge files in `data/` (`Test.csv`, `SampleSubmission.md`, `SourceManifest.csv`, `sources/`).
 
-TODO before final submission: document the exact model checkpoint (`ollama show qwen3:1.7b`) and its total
-parameter count, and system package versions.
+## Model
+
+One generative model: **Qwen3-1.7B** (`qwen3:1.7b` in Ollama), 1.7B parameters in total (1.4B non-embedding,
+per the Qwen model card), Apache-2.0 licence. Settings: `think=False`, temperature 0, `num_ctx` 8192. No
+fine-tuning. BM25 retrieval over the organiser guides is non-generative and written in plain Python.
+
+## Results (25 Nov 2026)
+
+| What | Result |
+|---|---|
+| Zindi public leaderboard | **0.1098**, rank 127 (212 active teams; the top teams scored about 0.97) |
+| Questions answered | 438 / 600: 68 with hand-written profiles (Dublin, Zürich), 370 with the automatic profile |
+| Not answered | 162: 100 from families with no tabular source, 62 from formats not read (GTFS zip, LAZ/GeoTIFF, SQLite graph) |
+| Dublin holdout (own questions, not Test) | plan 15/20, numbers in text 14/19, Yes/No verdicts 10/10, invented numbers 0 |
+
+The public score only covers part of the test set until the competition closes.
+
+What the score taught:
+
+* **Source-specific tools are what scores.** The hand-written profiles (Dublin, Zürich) answer well. The
+  automatic profile reads almost any table, but a 1.7B model cannot plan the multi-step questions of the Test
+  (joins between files, service calendars, formulas, comparisons of two geometries), so most of its answers miss
+  the numbers and score only on the Yes/No part. The leaderboard top (~0.97) points to dedicated solvers per
+  dataset family, with the model only choosing among them.
+* **A development set must look like the Test.** Our own 18 simple questions on the automatic profile reached
+  18/18; the real Test questions were far harder. Simple questions measured the plumbing, not the task.
+* **Deterministic numbers hold up.** The model never computes: Python computes, writes and cites, and a number
+  guard rejects any number that does not come from a tool. No evaluation found an invented number.
 
 ## Regenerate the submission
 
@@ -95,3 +121,8 @@ more detail: `openpyxl`, `odfpy`, `pypdf`, `rasterio`, `laspy[lazrs]`.
 ```bash
 python -m pytest tests -q
 ```
+
+## Licence
+
+Apache License 2.0 (see `LICENSE`). Data are not included; each source keeps its own licence
+(see `SourceManifest.csv`).

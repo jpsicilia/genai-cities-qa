@@ -1,5 +1,11 @@
 pandas
+numpy
 pyyaml
-pytest
 ollama
 geopandas
+shapely
+pyogrio
+openpyxl
+odfpy
+pytest
+# optional, only for scripts/dump_schemas.py: laspy rasterio pypdf pillow
