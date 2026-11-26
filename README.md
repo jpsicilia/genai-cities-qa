@@ -58,7 +58,7 @@ The public score only covers part of the test set until the competition closes.
 
 What the score taught:
 
-* **Source-specific tools are what scores.** The hand-written profiles (Dublin, Zürich) answer well. The
+* **Source-specific tools are what scores.** The hand-written profiles (Dublin, Zürich) do well on our own holdout (15/20); their Test score is not reported separately. The
   automatic profile reads almost any table, but a 1.7B model cannot plan the multi-step questions of the Test
   (joins between files, service calendars, formulas, comparisons of two geometries), so most of its answers miss
   the numbers and score only on the Yes/No part. The leaderboard top (~0.97) points to dedicated solvers per
@@ -87,7 +87,7 @@ What the score taught:
 ## Regenerate the submission
 
 ```bash
-python -u scripts/make_submission.py --out runs/submission.md
+python -u scripts/make_submission.py --auto --out runs/submission.md   # the submitted run (~3 h on a laptop CPU)
 python scripts/validate_submission.py runs/submission.md
 ```
 
@@ -114,7 +114,7 @@ Deterministic plan repairs for automatic profiles only (`executor.auto_repair`):
 becomes `group_count` on the column the question names (also abbreviated: hour → `hr`); calls with invented
 filter values (`'max_value'` on a numeric column) are dropped; a percent whose denominator excludes its numerator
 is dropped; a second label named in the question (2021 *and* 2023) gets its own call; "total" over several rows is
-a sum; the mean of a single row is read as that cell. Hand-written profiles keep the v8 prompt and schema exactly.
+a sum; the mean of a single row is read as that cell. Hand-written profiles keep their original prompt and schema unchanged (a change there cost 2 holdout cases).
 `make_submission.py` runs the questions family by family (Test.csv is shuffled), so each automatic profile is
 built once; the output file keeps the SampleSubmission order.
 
