@@ -68,6 +68,22 @@ What the score taught:
 * **Deterministic numbers hold up.** The model never computes: Python computes, writes and cites, and a number
   guard rejects any number that does not come from a tool. No evaluation found an invented number.
 
+## Limitations
+
+* **Formats not read.** GTFS feeds inside zip files, LiDAR point clouds (LAZ) and rasters (GeoTIFF), and the
+  SQLite road graph are not loaded, so their 62 Test questions get the fallback answer. PDF and HTML documents are
+  used only through the guide index, not as data.
+* **Multi-step questions.** The automatic profile gives the model generic tools (count, sum, mean, value,
+  extreme, group counts). Questions that need joins between files, service calendars, times past midnight,
+  geometry comparisons or chained formulas are beyond what a 1.7B planner composes from those tools; they need
+  dedicated solvers.
+* **Hand-written profiles are dataset-specific.** `profiles/dublin.yaml` and `profiles/zurich.yaml` help only when
+  the same datasets come back; new datasets go through the automatic profile.
+* **Holdout gold is private.** `scripts/eval_holdout.py` needs `scripts/gold_dublin.py`, which is kept out of the
+  repository so the holdout stays a clean measurement. The other evaluation scripts run on public inputs.
+* **Small evaluation sets.** 20 holdout and 18 automatic-profile questions; with a 1.7B model a prompt change
+  moves ±2 cases, so changes were judged by the cause of each failure, not by totals.
+
 ## Regenerate the submission
 
 ```bash
@@ -117,6 +133,21 @@ python -u scripts/dump_schemas.py --out runs/schemas.txt    # read-only; --all i
 Prints, per family of Test questions, a compact schema of every source (columns, types, nulls, examples;
 spreadsheet cells with coordinates; raster, point-cloud, XML, IFC and SQLite summaries). Optional packages give
 more detail: `openpyxl`, `odfpy`, `pypdf`, `rasterio`, `laspy[lazrs]`.
+
+## Repository layout
+
+```
+pipeline/   one question end to end: planner (LLM, JSON schema), executor and plan repairs, derived values,
+            Yes/No verdicts, answer templates, number guard, evidence, submission assembly and validation
+tools/      deterministic tools (tabular, spatial), generic reader and automatic profile, BM25 over guides
+profiles/   hand-written profiles for the Dublin and Zürich tree inventories
+scripts/    make_submission, validate_submission, evaluations (holdout, automatic profile, Zürich),
+            dump_schemas and exploration helpers
+tests/      152 tests on small synthetic replicas of the real formats (invented values)
+```
+
+Not in the repository: `data/` (challenge sources, each under its own licence), `runs/` (generated answers)
+and the private holdout gold.
 
 ## Tests
 
